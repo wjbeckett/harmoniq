@@ -65,18 +65,28 @@ class ListenBrainzClient:
             logger.error("Cannot make ListenBrainz request: Client not initialized or token invalid.")
             return None
 
-        url = LISTENBRAINZ_API_URL + endpoint
-        headers = self.auth_header.copy()
-        headers['User-Agent'] = 'Harmoniq Playlist Generator v0.3'
+        # Construct URL carefully using urljoin to handle slashes
+        # Ensure endpoint doesn't start with a slash if base has one
+        relative_endpoint = endpoint.lstrip('/')
+        url = urllib.parse.urljoin(LISTENBRAINZ_API_URL, relative_endpoint)
 
-        logger.debug(f"Making ListenBrainz request: endpoint={endpoint}, params={params}")
+        headers = self.auth_header.copy()
+        headers['User-Agent'] = 'Harmoniq Playlist Generator v0.3' # Keep version updated?
+
+        # Log the final URL *before* the request
+        # Prepare params string for logging (requests does this internally too)
+        query_string = urllib.parse.urlencode(params) if params else ""
+        full_url_for_log = f"{url}?{query_string}" if query_string else url
+        logger.debug(f"Making ListenBrainz request: GET {full_url_for_log}")
+        # logger.debug(f"Headers: {headers}") # Can be verbose, enable if needed
 
         for attempt in range(MAX_RETRIES):
             try:
                 response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
+                # Log status code immediately
+                logger.debug(f"Response status code: {response.status_code} from {response.url}")
                 response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-                # ListenBrainz API might return empty body on success for some endpoints?
-                # Handle potential JSON decode error for empty responses
+
                 try:
                      data = response.json()
                 except requests.exceptions.JSONDecodeError:
@@ -84,88 +94,122 @@ class ListenBrainzClient:
                          logger.warning(f"ListenBrainz request to {endpoint} returned 200 OK with empty body.")
                          return {} # Return empty dict for successful empty response
                      else:
-                         logger.error(f"Failed to decode JSON from ListenBrainz response (Status: {response.status_code})")
-                         raise # Re-raise the JSONDecodeError if content is not empty
+                         logger.error(f"Failed to decode JSON from ListenBrainz response (Status: {response.status_code}, URL: {response.url})")
+                         # Log response body if possible (might be large or non-text)
+                         try:
+                              logger.error(f"Response body: {response.text[:500]}...") # Log first 500 chars
+                         except Exception:
+                              logger.error("Could not log response body.")
+                         # Still raise original error if JSON decode failed on non-empty body
+                         raise
 
-                # Assuming ListenBrainz doesn't embed errors like Last.fm, rely on HTTP status codes
                 return data
 
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"ListenBrainz request failed (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
-                # Check if it's an auth error (401) - no point retrying
-                if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 401:
+            except requests.exceptions.HTTPError as e:
+                 # Handle specific HTTP errors here for better logging/retry logic
+                 status_code = e.response.status_code
+                 logger.warning(f"ListenBrainz HTTP Error {status_code} (Attempt {attempt + 1}/{MAX_RETRIES}) for {e.request.url}: {e}")
+                 if status_code == 401:
                      logger.error("ListenBrainz authentication failed (401). Check token. Aborting request.")
                      return None
-                # Check for other non-retryable errors? (e.g., 404 Not Found?)
-                if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
-                     logger.error(f"ListenBrainz endpoint not found (404): {endpoint}. Aborting request.")
-                     return None
+                 if status_code == 404:
+                     logger.error(f"ListenBrainz endpoint not found (404): {endpoint}. Aborting request for this endpoint.")
+                     # Specific handling for the recommendations 404
+                     if "recommendations/user" in endpoint:
+                          logger.error("This might indicate no recommendations are available for the user or an API issue.")
+                     return None # Don't retry 404
+                 # Add other status codes to handle if needed (e.g., 400 Bad Request, 429 Rate Limit)
+                 if status_code == 400:
+                      logger.error(f"ListenBrainz Bad Request (400). Check parameters. Aborting request. Details: {e.response.text}")
+                      return None # Don't retry 400
 
-                if attempt + 1 == MAX_RETRIES:
-                    logger.error(f"Max retries reached for ListenBrainz request ({endpoint}).")
-                    return None
-                sleep_time = RETRY_DELAY * (attempt + 1)
-                logger.info(f"Retrying ListenBrainz request in {sleep_time} seconds...")
-                time.sleep(sleep_time)
+            except requests.exceptions.RequestException as e: # Catch other connection/timeout errors
+                logger.warning(f"ListenBrainz connection/timeout error (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+                # These are generally retryable
+
             except Exception as e:
-                 logger.error(f"An unexpected error occurred during ListenBrainz request processing: {e}")
+                 logger.exception(f"An unexpected error occurred during ListenBrainz request processing: {e}") # Use exception for trace
                  return None # Don't retry on unexpected errors
 
-        return None
+            # Retry logic for retryable errors
+            if attempt + 1 == MAX_RETRIES:
+                logger.error(f"Max retries reached for ListenBrainz request ({endpoint}).")
+                return None
+            sleep_time = RETRY_DELAY * (attempt + 1)
+            logger.info(f"Retrying ListenBrainz request in {sleep_time} seconds...")
+            time.sleep(sleep_time)
+
+        return None # Should only be reached if all retries fail
+
 
     def get_recommendations(self, limit=config.PLAYLIST_SIZE_LISTENBRAINZ_RECS):
-        """Fetches recommended tracks for the validated user."""
-        if not self.api_user or not self.auth_header:
-            logger.warning("Cannot get recommendations: ListenBrainz client not configured or user not validated.")
-            return []
-
-        logger.info(f"Fetching {limit} recommendations for user '{self.api_user}' from ListenBrainz...")
-
-        endpoint = f"recommendations/user/{self.api_user}/track"
-        params = {'count': limit}
-
-        data = self._make_request(endpoint, params=params)
+        """
+        Fetches recommended tracks. Tries personalized first, falls back to experimental.
+        """
         recommendations = []
 
-        # Add a check here in case _make_request returns None (e.g., after 404 or other errors)
-        if data is None:
-             logger.error("Failed to fetch recommendations from ListenBrainz: No data received from API.")
-             return [] # Return empty list if the request ultimately failed
+        # --- Attempt 1: Personalized Endpoint ---
+        if self.api_user and self.auth_header:
+            logger.info(f"Attempting personalized recommendations fetch for user '{self.api_user}' from ListenBrainz...")
+            # Correct documented endpoint path
+            endpoint_pers = f"recommendations/user/{self.api_user}/track"
+            params_pers = {'count': limit}
+            data_pers = self._make_request(endpoint_pers, params=params_pers)
 
-        # Proceed with parsing if data is not None
-        # Check structure - assuming payload.recommendations might be directly under data now based on other endpoints
-        payload = data.get('payload', {}) # Safely get payload, default to empty dict
-        raw_recs = payload.get('recommendations', []) # Safely get recommendations, default to empty list
+            # --- Handling based on _make_request result ---
+            if data_pers is not None: # Request did not fail with None (e.g., it wasn't a 404/401 or max retries)
+                payload_pers = data_pers.get('payload', {})
+                raw_recs_pers = payload_pers.get('recommendations', [])
+                if raw_recs_pers:
+                    logger.info("Successfully fetched data from PERSONALIZED recommendations endpoint.")
+                    # (Parsing logic remains the same)
+                    for rec in raw_recs_pers:
+                        track_meta = rec.get('track_metadata')
+                        if track_meta:
+                            artist_name = track_meta.get('artist_name')
+                            track_name = track_meta.get('track_name')
+                            if artist_name and track_name:
+                                recommendations.append({'artist': artist_name, 'title': track_name})
+                            else: logger.warning(f"Skipping malformed LB rec (pers): {rec}")
+                        else: logger.warning(f"Skipping malformed LB rec (pers): {rec}")
+                    logger.info(f"Processed {len(recommendations)} tracks from personalized recommendations.")
+                    # If we got personalized recs, RETURN them immediately
+                    return recommendations[:limit]
+                else:
+                    # Endpoint returned OK, but the list was empty
+                    logger.info("Personalized recommendations endpoint returned successfully but the list was empty. Will try experimental.")
+            # else: Failure (e.g., 404) was already logged within _make_request
 
+        # --- Attempt 2: Experimental Endpoint (Fallback if personalized failed or returned empty) ---
+        logger.info("Falling back to fetching EXPERIMENTAL track recommendations from ListenBrainz...")
+        endpoint_exp = "recommendations/track/experimental"
+        params_exp = {'count': limit}
+        data_exp = self._make_request(endpoint_exp, params=params_exp)
 
-        if raw_recs: # Check if raw_recs is not empty
-            # Example structure: { "track_metadata": {"artist_name": "...", "track_name": "..."}, "score": 0.9 }
-            for rec in raw_recs:
-                track_meta = rec.get('track_metadata') # Recommendations are nested here
+        if data_exp is None:
+             logger.error("Failed to fetch recommendations from ListenBrainz experimental endpoint as well.")
+             return [] # Both attempts failed
 
+        payload_exp = data_exp.get('payload', {})
+        raw_recs_exp = payload_exp.get('recommendations', [])
+
+        if raw_recs_exp:
+            logger.info("Successfully fetched data from EXPERIMENTAL recommendations endpoint.")
+            # (Parsing logic remains the same)
+            for rec in raw_recs_exp:
+                track_meta = rec.get('track_metadata')
                 if track_meta:
                     artist_name = track_meta.get('artist_name')
                     track_name = track_meta.get('track_name')
-
                     if artist_name and track_name:
-                        recommendations.append({
-                            'artist': artist_name,
-                            'title': track_name
-                            # Could also store mbid if useful later: 'mbid': track_meta.get('mbid') # Check actual key name
-                        })
-                    else:
-                        logger.warning(f"Skipping malformed ListenBrainz recommendation entry (missing artist/track name in metadata): {rec}")
-                else:
-                    logger.warning(f"Skipping malformed ListenBrainz recommendation entry (missing track_metadata): {rec}")
+                        recommendations.append({'artist': artist_name, 'title': track_name})
+                    else: logger.warning(f"Skipping malformed LB rec (exp): {rec}")
+                else: logger.warning(f"Skipping malformed LB rec (exp): {rec}")
+            logger.info(f"Processed {len(recommendations)} tracks from experimental recommendations.")
+        elif 'payload' in data_exp and not raw_recs_exp :
+             logger.info("ListenBrainz experimental endpoint returned recommendations payload, but the list is empty.")
+        else:
+             logger.warning("Could not find 'payload' or 'recommendations' in the expected structure in ListenBrainz experimental response.")
+             logger.debug(f"ListenBrainz Experimental Response Data: {data_exp}")
 
-            logger.info(f"Successfully processed {len(recommendations)} valid recommendations from ListenBrainz.")
-        # Handle cases where payload exists but recommendations list is empty
-        elif 'payload' in data and not raw_recs :
-             logger.info("ListenBrainz returned recommendations payload, but the list is empty.")
-        else: # Handle cases where the structure was unexpected (no payload etc.)
-             logger.warning("Could not find 'payload' or 'recommendations' in the expected structure in ListenBrainz response.")
-             logger.debug(f"ListenBrainz Response Data: {data}")
-
-
-        # API already gives a ranked list, limit is handled by API 'count' param
-        return recommendations[:limit] # Ensure we don't exceed limit just in case
+        return recommendations[:limit]
