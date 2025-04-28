@@ -17,10 +17,11 @@ Do you love your self-hosted music setup with Plex or Jellyfin but miss the auto
 ## Core Features
 
 *   **Automatic Playlist Creation & Updates:** Runs periodically to keep playlists fresh.
-*   **Last.fm Integration:**
-    *   Creates playlists from your personalized track recommendations.
-    *   Creates playlists based on global chart data (Top Tracks).
-*   **(Planned) ListenBrainz Integration:** Fetch recommendations from ListenBrainz.
+*   **ListenBrainz Integration (Primary):**
+    *   Creates playlists from your personalized track recommendations (requires ListenBrainz token).
+*   **Last.fm Integration (Optional):**
+    *   Creates playlists based on global chart data (requires Last.fm API key/user).
+    *   (Optional) Creates derived recommendation playlists via similar artists (if enabled).
 *   **(Planned) Time-Based Dynamic Playlists:** Configure a "Daily Flow" style playlist that changes content based on the time of day (e.g., chill morning music, energetic afternoon tunes).
 *   **(Planned) Custom Logic Integration:** Hooks for incorporating your own playlist generation scripts.
 *   **Plex Support:** Directly interacts with your Plex Media Server library.
@@ -34,11 +35,13 @@ Do you love your self-hosted music setup with Plex or Jellyfin but miss the auto
 *   **Docker:** Docker and Docker Compose installed on your system.
 *   **Plex Media Server:** A running instance accessible via network from the Docker container.
 *   **Plex Token:** Your [Plex Authentication Token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
-*   **Last.fm Account (Optional but Recommended):**
+*   **ListenBrainz Account & Token (Recommended):**
+    *   Required for personalized recommendations (`ENABLE_LISTENBRAINZ_RECS=true`).
+    *   Your ListenBrainz User Token (Find in your profile settings on listenbrainz.org).
+*   **Last.fm Account (Optional):**
+    *   Required for global charts (`ENABLE_LASTFM_CHARTS=true`) or derived recommendations (`ENABLE_LASTFM_RECS=true`).
     *   API Key (Get one [here](https://www.last.fm/api/account/create))
     *   Your Last.fm Username
-*   **ListenBrainz Account (Optional):**
-    *   Your ListenBrainz User Token (Find in your profile settings)
 
 ## Installation & Setup (Docker Compose Recommended)
 
