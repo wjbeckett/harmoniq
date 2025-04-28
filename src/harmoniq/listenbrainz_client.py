@@ -2,6 +2,7 @@
 import logging
 import requests
 import time
+import urllib.parse
 
 # Import config variables
 from . import config
