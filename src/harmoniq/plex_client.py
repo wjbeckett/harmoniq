@@ -75,35 +75,49 @@ class PlexClient:
             logger.warning("Cannot search track: Artist name or track title is missing.")
             return None
 
-        # Use Plex's search capabilities. `searchTracks` is generally preferred.
-        # It searches across multiple fields, potentially handling variations better.
-        # We filter by artist title (`artist.title`) and track title (`track.title`).
         try:
-            # Use libtype='track' for potentially better performance if supported? Check plexapi docs.
-            # Exact search might be too strict: `artist.title==`: artist_name, `track.title==`: track_title
-            # Using filters directly allows more flexibility
-            logger.debug(f"Searching for track: Artist='{artist_name}', Title='{track_title}' in library '{music_library.title}'")
-            results = music_library.searchTracks(title=track_title, artist=artist_name)
+            # --- CORRECTED SEARCH ---
+            # Filter by track title and the track's grandparent (artist) title
+            # Using 'title__iexact' and 'grandparentTitle__iexact' might offer case-insensitive exact matching
+            # Alternatively, 'title__icontains' and 'grandparentTitle__icontains' for broader matching
+            # Let's start with case-insensitive exact matching as it's less likely to give wrong results.
+            search_filters = {
+                'title__iexact': track_title,
+                'grandparentTitle__iexact': artist_name
+            }
+            logger.debug(f"Searching for track with filters: {search_filters} in library '{music_library.title}'")
+
+            # Use the 'search' method with filters directly for more control
+            # results = music_library.searchTracks(title=track_title, artist=artist_name) <-- Incorrect way
+            results = music_library.search(libtype='track', filters=search_filters) # <-- Corrected way
 
             if not results:
-                logger.debug(f"Track not found in Plex: {artist_name} - {track_title}")
-                return None
+                # Try a slightly broader search (case-insensitive contains) as a fallback? Optional.
+                logger.debug(f"Track not found with exact match. Trying broader search for '{artist_name} - {track_title}'...")
+                search_filters_broad = {
+                    'title__icontains': track_title,
+                    'grandparentTitle__icontains': artist_name
+                }
+                results = music_library.search(libtype='track', filters=search_filters_broad)
+                if not results:
+                     logger.debug(f"Track still not found with broader search: {artist_name} - {track_title}")
+                     return None # Definitely not found
 
             # Handle multiple results. For now, take the first one.
-            # Future enhancement: Could try matching album or duration if needed.
             if len(results) > 1:
-                # Log the actual titles found for debugging potential mismatches
-                found_details = [f"'{t.title}' by '{t.grandparentTitle}' (Album: '{t.parentTitle}')" for t in results[:3]] # Log first few
-                logger.debug(f"Multiple ({len(results)}) matches for '{artist_name} - {track_title}'. Using first: {found_details[0]}. Other matches: {found_details[1:]}")
+                found_details = [f"'{t.title}' by '{t.grandparentTitle}' (Album: '{t.parentTitle}')" for t in results[:3]]
+                logger.debug(f"Multiple ({len(results)}) matches found for '{artist_name} - {track_title}'. Using first: {found_details[0]}. Other matches: {found_details[1:]}")
 
-            # Return the plexapi Track object
             track = results[0]
             logger.debug(f"Found matching track: '{track.title}' by '{track.grandparentTitle}' (Key: {track.key})")
             return track
 
+        except BadRequest as e:
+             # This might happen if filter fields are still wrong
+             logger.error(f"BadRequest searching Plex for '{artist_name} - {track_title}': {e}. Check filter fields.")
+             return None
         except Exception as e:
-            # Catch potential errors during the search itself
-            logger.error(f"Error searching Plex for '{artist_name} - {track_title}': {e}")
+            logger.error(f"Unexpected error searching Plex for '{artist_name} - {track_title}': {e}")
             return None
 
     def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library):
