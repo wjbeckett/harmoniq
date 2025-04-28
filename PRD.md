@@ -54,7 +54,7 @@ This document outlines the requirements for the "Harmoniq", a standalone, contai
 
 *   **FR3: Plex Interaction:**
     *   The application MUST connect to the specified Plex Media Server using the provided `PLEX_URL` and `PLEX_TOKEN`.
-    *   The application MUST locate the specified Plex Music Library section(s) by name (`PLEX_MUSIC_LIBRARY_NAME`).
+    *   The application MUST locate the specified Plex Music Library section(s) by name (`PLEX_MUSIC_LIBRARY_NAMES`).
     *   The application MUST search for tracks within the Plex library based on Artist and Title information obtained from external services.
     *   The application MUST be able to search/filter tracks in the Plex library based on metadata like `Genre` (primary) or potentially `Mood`/`Style` tags for the time-based playlist.
     *   The application MUST handle cases where a recommended track is not found in the Plex library (log it).
