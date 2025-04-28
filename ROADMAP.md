@@ -7,7 +7,7 @@ This roadmap outlines the planned development phases for the Harmoniq.
 *   **Target Timeframe:** ~1 week
 *   **Features:**
     *   Basic Python project structure (`src/`, `tests/`, etc.).
-    *   Configuration loading via environment variables (`PLEX_URL`, `PLEX_TOKEN`, `PLEX_MUSIC_LIBRARY_NAME`, `LASTFM_API_KEY`, `LASTFM_USER`, `PLAYLIST_NAME_LASTFM_RECS`, `PLAYLIST_SIZE_RECS`).
+    *   Configuration loading via environment variables (`PLEX_URL`, `PLEX_TOKEN`, `PLEX_MUSIC_LIBRARY_NAMES`, `LASTFM_API_KEY`, `LASTFM_USER`, `PLAYLIST_NAME_LASTFM_RECS`, `PLAYLIST_SIZE_RECS`).
     *   Implement `fetch_lastfm_recommendations` function using `requests`.
     *   Implement core Plex connection logic using `python-plexapi`.
     *   Implement `find_plex_track` function (basic Artist/Title matching).
