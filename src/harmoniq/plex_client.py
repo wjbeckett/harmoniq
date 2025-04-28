@@ -1,17 +1,20 @@
 # src/harmoniq/plex_client.py
 import logging
-import time # Import time for potential delays/retries if needed later
+import time
 from plexapi.server import PlexServer
 from plexapi.exceptions import NotFound, Unauthorized, BadRequest
-from plexapi.playlist import Playlist # Import Playlist type hint
+from plexapi.playlist import Playlist
+from plexapi.library import LibrarySection # Import LibrarySection type hint
 
-# Import config variables
+# Import config variables (still needed for defaults if main doesn't pass them)
 from . import config
 
 logger = logging.getLogger(__name__)
 
 class PlexClient:
     """Handles interactions with the Plex Media Server."""
+
+    # __init__ and _connect remain the same
 
     def __init__(self, baseurl=config.PLEX_URL, token=config.PLEX_TOKEN):
         self.baseurl = baseurl
@@ -42,85 +45,99 @@ class PlexClient:
             self.plex = None
             raise
 
-    def get_music_library(self, library_name=config.PLEX_MUSIC_LIBRARY_NAMES):
-        """Gets the specified music library object from the Plex server."""
+    def get_music_library(self, library_name: str) -> LibrarySection | None:
+        """
+        Gets a specific music library object by name from the Plex server.
+
+        Args:
+            library_name: The exact name of the music library section.
+
+        Returns:
+            A plexapi LibrarySection object if found and is a music library, otherwise None.
+        """
         if not self.plex:
             logger.error("Cannot get library: Not connected to Plex.")
             return None
+        if not library_name:
+            logger.error("Cannot get library: No library name provided.")
+            return None
+
         try:
-            logger.info(f"Accessing music library: '{library_name}'")
+            logger.debug(f"Attempting to access music library: '{library_name}'")
             music_library = self.plex.library.section(library_name)
+            # Validate type
             if music_library.type != 'artist':
-                 logger.error(f"Section '{library_name}' is not a Music library (type: {music_library.type}).")
+                 logger.warning(f"Section '{library_name}' is not a Music library (type: {music_library.type}). Skipping.")
                  return None
-            logger.info(f"Successfully accessed library '{music_library.title}'.")
+            logger.debug(f"Successfully accessed library '{music_library.title}'.")
             return music_library
         except NotFound:
-            logger.error(f"Music library '{library_name}' not found on the Plex server.")
+            logger.warning(f"Music library '{library_name}' not found on the Plex server.")
             return None
         except Exception as e:
             logger.error(f"An error occurred accessing library '{library_name}': {e}")
             return None
 
-    # --- IMPLEMENTED METHODS ---
-    def find_track(self, music_library, artist_name, track_title):
+    def find_track(self, music_libraries: list[LibrarySection], artist_name: str, track_title: str):
         """
-        Searches for a specific track within a given music library.
-        Returns the Plex Track object if found, otherwise None.
+        Searches for a specific track sequentially across multiple music libraries.
+        Returns the first Plex Track object found, otherwise None.
+
+        Args:
+            music_libraries: A list of plexapi LibrarySection objects to search within.
+            artist_name: The name of the artist.
+            track_title: The name of the track.
         """
-        if not music_library:
-            logger.error("Cannot search track: Music library object is invalid.")
+        if not music_libraries:
+            logger.error("Cannot search track: List of music libraries is empty or invalid.")
             return None
         if not artist_name or not track_title:
             logger.warning("Cannot search track: Artist name or track title is missing.")
             return None
 
-        try:
-            # --- CORRECTED SEARCH ---
-            # Filter by track title and the track's grandparent (artist) title
-            # Using 'title__iexact' and 'grandparentTitle__iexact' might offer case-insensitive exact matching
-            # Alternatively, 'title__icontains' and 'grandparentTitle__icontains' for broader matching
-            # Let's start with case-insensitive exact matching as it's less likely to give wrong results.
-            search_filters = {
-                'title__iexact': track_title,
-                'grandparentTitle__iexact': artist_name
-            }
-            logger.debug(f"Searching for track with filters: {search_filters} in library '{music_library.title}'")
+        search_term_log = f"'{artist_name} - {track_title}'"
+        logger.debug(f"Searching for track {search_term_log} across {len(music_libraries)} libraries...")
 
-            # Use the 'search' method with filters directly for more control
-            # results = music_library.searchTracks(title=track_title, artist=artist_name) <-- Incorrect way
-            results = music_library.search(libtype='track', filters=search_filters) # <-- Corrected way
-
-            if not results:
-                # Try a slightly broader search (case-insensitive contains) as a fallback? Optional.
-                logger.debug(f"Track not found with exact match. Trying broader search for '{artist_name} - {track_title}'...")
-                search_filters_broad = {
-                    'title__icontains': track_title,
-                    'grandparentTitle__icontains': artist_name
+        for library in music_libraries:
+            logger.debug(f"Searching in library: '{library.title}'")
+            try:
+                # Try exact match first (case-insensitive)
+                search_filters_exact = {
+                    'title__iexact': track_title,
+                    'grandparentTitle__iexact': artist_name
                 }
-                results = music_library.search(libtype='track', filters=search_filters_broad)
+                results = library.search(libtype='track', filters=search_filters_exact)
+
                 if not results:
-                     logger.debug(f"Track still not found with broader search: {artist_name} - {track_title}")
-                     return None # Definitely not found
+                    # Fallback: Try broader contains match (case-insensitive)
+                    search_filters_broad = {
+                        'title__icontains': track_title,
+                        'grandparentTitle__icontains': artist_name
+                    }
+                    results = library.search(libtype='track', filters=search_filters_broad)
 
-            # Handle multiple results. For now, take the first one.
-            if len(results) > 1:
-                found_details = [f"'{t.title}' by '{t.grandparentTitle}' (Album: '{t.parentTitle}')" for t in results[:3]]
-                logger.debug(f"Multiple ({len(results)}) matches found for '{artist_name} - {track_title}'. Using first: {found_details[0]}. Other matches: {found_details[1:]}")
+                if results:
+                    # Found in this library!
+                    if len(results) > 1:
+                        found_details = [f"'{t.title}' by '{t.grandparentTitle}' (Album: '{t.parentTitle}')" for t in results[:3]]
+                        logger.debug(f"Multiple ({len(results)}) matches found for {search_term_log} in '{library.title}'. Using first: {found_details[0]}. Other matches: {found_details[1:]}")
+                    track = results[0]
+                    logger.debug(f"Found matching track in '{library.title}': '{track.title}' by '{track.grandparentTitle}' (Key: {track.key})")
+                    return track # Return the first match found across libraries
 
-            track = results[0]
-            logger.debug(f"Found matching track: '{track.title}' by '{track.grandparentTitle}' (Key: {track.key})")
-            return track
+            except BadRequest as e:
+                 logger.error(f"BadRequest searching Plex in library '{library.title}' for {search_term_log}: {e}. Check filter fields.")
+                 # Continue searching in the next library
+            except Exception as e:
+                 logger.error(f"Unexpected error searching Plex in library '{library.title}' for {search_term_log}: {e}")
+                 # Continue searching in the next library
 
-        except BadRequest as e:
-             # This might happen if filter fields are still wrong
-             logger.error(f"BadRequest searching Plex for '{artist_name} - {track_title}': {e}. Check filter fields.")
-             return None
-        except Exception as e:
-            logger.error(f"Unexpected error searching Plex for '{artist_name} - {track_title}': {e}")
-            return None
+        # If loop finishes without finding the track
+        logger.debug(f"Track {search_term_log} not found in any of the provided libraries.")
+        return None
 
-    def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library):
+    # update_playlist remains the same - it takes a specific library context for creation
+    def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection):
         """
         Creates a new Plex playlist or updates an existing one by clearing
         and adding the provided tracks.
@@ -128,7 +145,7 @@ class PlexClient:
         Args:
             playlist_name: Name of the playlist to create/update.
             tracks_to_add: A list of plexapi.audio.Track objects.
-            music_library: The plexapi.library.LibrarySection object (used for context if creating).
+            music_library: The plexapi.library.LibrarySection object to use for context if creating the playlist.
         """
         if not self.plex:
             logger.error("Cannot update playlist: Not connected to Plex.")
@@ -136,37 +153,37 @@ class PlexClient:
         if not playlist_name:
             logger.error("Cannot update playlist: Playlist name is empty.")
             return False
-        if not music_library: # Needed for context when creating playlist
-             logger.error("Cannot update playlist: Music library context is missing.")
+        if not music_library: # Still needed for context when creating a new playlist
+             logger.error("Cannot update playlist: Target music library context is missing for potential creation.")
              return False
-        if not tracks_to_add:
-             logger.info(f"No tracks provided to add to playlist '{playlist_name}'. Skipping update.")
-             # Optionally delete playlist if empty? For now, just do nothing.
-             return True # Technically successful, as there was nothing to do
+        # Check if tracks_to_add is empty is already handled
 
         try:
             playlist: Playlist = None
-            # Check if playlist exists
+            # Check if playlist exists (Playlists are server-wide, not library specific in plexapi lookup)
             try:
                 logger.debug(f"Checking for existing playlist: '{playlist_name}'")
-                playlist = self.plex.playlist(playlist_name)
+                playlist = self.plex.playlist(playlist_name) # This finds the playlist by name globally
                 logger.info(f"Found existing playlist '{playlist_name}'. Clearing items...")
                 # Clear existing items
-                playlist.removeItems(playlist.items()) # Pass the actual items to remove
-                # Small delay might help prevent race conditions? (optional)
-                # time.sleep(1)
+                if playlist.items(): # Check if there are items before trying to remove
+                     playlist.removeItems(playlist.items())
+                else:
+                     logger.debug("Existing playlist is empty, no items to clear.")
+                # time.sleep(1) # Optional delay
 
             except NotFound:
                 logger.info(f"Playlist '{playlist_name}' not found. Creating new playlist...")
-                # Create playlist - requires items and a library context (use first track's library?)
-                # Using the passed music_library section seems more robust.
+                # Create playlist - requires items and a library context
+                if not tracks_to_add:
+                     logger.info(f"No tracks to add, skipping creation of empty playlist '{playlist_name}'.")
+                     return True # Or False depending on desired behaviour for empty creation
                 playlist = self.plex.createPlaylist(playlist_name, section=music_library, items=tracks_to_add)
-                logger.info(f"Successfully created playlist '{playlist_name}' with {len(tracks_to_add)} tracks.")
-                # No need to add items again if created with items
+                logger.info(f"Successfully created playlist '{playlist_name}' in context of library '{music_library.title}' with {len(tracks_to_add)} tracks.")
                 return True
 
-            # If playlist existed and was cleared, add the new items
-            if playlist:
+            # If playlist existed and was cleared, add the new items (if any)
+            if playlist and tracks_to_add:
                  logger.info(f"Adding {len(tracks_to_add)} tracks to playlist '{playlist_name}'...")
                  playlist.addItems(tracks_to_add)
                  logger.info(f"Successfully updated playlist '{playlist_name}' with {len(tracks_to_add)} tracks.")
@@ -179,13 +196,20 @@ class PlexClient:
                      logger.warning(f"Could not update summary for playlist '{playlist_name}': {e}")
 
                  return True
+            elif playlist and not tracks_to_add:
+                logger.info(f"Playlist '{playlist_name}' exists but has no new tracks to add.")
+                # Optionally update summary to reflect it's empty now?
+                return True # Successful update (to empty state)
+
 
         except BadRequest as e:
              # Catch specific errors like trying to add items from different libraries
-             logger.error(f"BadRequest error updating playlist '{playlist_name}': {e}. Ensure all tracks are from the same library.")
+             logger.error(f"BadRequest error updating playlist '{playlist_name}': {e}. This might indicate tracks are from different libraries or other issues.")
              return False
         except Exception as e:
-             logger.error(f"An unexpected error occurred updating playlist '{playlist_name}': {e}")
+             logger.exception(f"An unexpected error occurred updating playlist '{playlist_name}': {e}") # Use exception for full trace
              return False
 
-        return False # Should not be reached, but default to failure
+        # Fallback case - should ideally not be reached
+        logger.error(f"Reached end of update_playlist for '{playlist_name}' without clear success/failure.")
+        return False
