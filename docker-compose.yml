@@ -1,0 +1,17 @@
+services:
+  harmoniq:
+    # Use 'build: ./src' if building locally instead of pulling a pre-built image
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    # image: your_username/harmoniq:latest # Or use build context
+    container_name: harmoniq
+    # 'restart: unless-stopped' is fine even for Phase 1, it just won't restart after finishing.
+    # It's ready for Phase 2 continuous operation.
+    restart: unless-stopped
+    env_file:
+      - .env # Load variables from .env file for local docker-compose testing
+    # environment: # You can also define variables directly here, overriding .env if needed
+      # - PLEX_URL=...
+    # volumes: # Uncomment if needed later
+      # - ./logs:/app/logs

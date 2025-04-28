@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.env
+venv/
+.idea/
+*.log
+
+# Docker
+docker-compose.override.yml
