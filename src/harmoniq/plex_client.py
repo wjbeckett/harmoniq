@@ -80,8 +80,8 @@ class PlexClient:
 
     def find_track(self, music_libraries: list[LibrarySection], artist_name: str, track_title: str):
         """
-        Searches for a specific track sequentially across multiple music libraries.
-        Returns the first Plex Track object found, otherwise None.
+        Searches for a specific track sequentially across multiple music libraries
+        using the library's search method with specific filters.
 
         Args:
             music_libraries: A list of plexapi LibrarySection objects to search within.
@@ -98,47 +98,32 @@ class PlexClient:
         search_term_log = f"'{artist_name} - {track_title}'"
         logger.debug(f"Searching for track {search_term_log} across {len(music_libraries)} libraries...")
 
-        # --- CORRECTED SEARCH - Attempt 2: Using Keyword Arguments ---
-        # Try using specific keyword arguments for common fields like title and artist title.
-        # The exact keywords might vary slightly based on plexapi version, but 'title' for track title
-        # and 'artist.title' or 'grandparentTitle' for artist title are common patterns.
-        # We'll add case-insensitivity using __iexact modifier directly to the keyword.
-
         for library in music_libraries:
             logger.debug(f"Searching in library: '{library.title}'")
-            results = [] # Initialize results for this library
+            results = []
             try:
-                # Try case-insensitive exact match first using keywords
-                logger.debug(f"Attempting exact search with keywords: title__iexact='{track_title}', artist.title__iexact='{artist_name}'")
-                # Note: Using 'artist.title__iexact' assumes plexapi supports this direct filter key.
-                # If this fails, the next attempt will use grandparentTitle.
-                try:
-                    # This specific filter key might require using the filters dict after all,
-                    # let's revert to the library search() method which is more general
-                    # and pass the common fields as direct keyword args if they are supported at that level.
-                    # The most reliable keywords are often just 'title' and potentially 'artist'.
-                    # Let's try the most basic keyword approach first:
-                    results = library.searchTracks(title__iexact=track_title, artist__title__iexact=artist_name)
-                    # If the above key `artist__title__iexact` doesn't work, `python-plexapi` might want
-                    # `grandparentTitle__iexact` *passed as a keyword*. Let's try that structure if needed.
+                # --- CORRECTED SEARCH - Attempt 4: Using filters dict again ---
+                # Try using 'artist.title' as the filter field name for the artist.
 
-                except BadRequest: # Catch potential bad filter keys specifically
-                     logger.warning(f"Keyword 'artist.title__iexact' might be invalid. Trying grandparentTitle.")
-                     # Fallback to trying grandparentTitle as a keyword
-                     results = library.searchTracks(title__iexact=track_title, grandparentTitle__iexact=artist_name)
-
+                # Try case-insensitive exact match first
+                logger.debug(f"Attempting exact search with filters: title__iexact='{track_title}', artist.title__iexact='{artist_name}'")
+                search_filters_exact = {
+                    'title__iexact': track_title,
+                    'artist.title__iexact': artist_name # Using dot notation for related field
+                }
+                results = library.search(libtype='track', filters=search_filters_exact)
 
                 if not results:
-                    # Fallback: Try broader contains match (case-insensitive) using keywords
-                    logger.debug(f"Track not found with exact keyword match. Trying broader contains search...")
-                    try:
-                         results = library.searchTracks(title__icontains=track_title, artist__title__icontains=artist_name)
-                    except BadRequest:
-                         logger.warning(f"Keyword 'artist.title__icontains' might be invalid. Trying grandparentTitle.")
-                         results = library.searchTracks(title__icontains=track_title, grandparentTitle__icontains=artist_name)
+                    # Fallback: Try broader contains match (case-insensitive)
+                    logger.debug(f"Track not found with exact filter match. Trying broader contains search...")
+                    search_filters_broad = {
+                        'title__icontains': track_title,
+                        'artist.title__icontains': artist_name # Using dot notation for related field
+                    }
+                    results = library.search(libtype='track', filters=search_filters_broad)
 
                     if not results:
-                         logger.debug(f"Track still not found with broader keyword search in '{library.title}'.")
+                         logger.debug(f"Track still not found with broader filter search in '{library.title}'.")
                          continue # Move to the next library
 
                 # Found results in this library
@@ -146,19 +131,20 @@ class PlexClient:
                     found_details = [f"'{t.title}' by '{t.grandparentTitle}' (Album: '{t.parentTitle}')" for t in results[:3]]
                     logger.debug(f"Multiple ({len(results)}) matches found for {search_term_log} in '{library.title}'. Using first: {found_details[0]}. Other matches: {found_details[1:]}")
                 track = results[0]
-                logger.info(f"Found matching track in '{library.title}': '{track.title}' by '{track.grandparentTitle}' (Key: {track.key})") # Change to INFO for success
+                # Use INFO level for successful finds for better visibility
+                logger.info(f"Found matching track in '{library.title}': '{track.title}' by '{track.grandparentTitle}' (Key: {track.key})")
                 return track # Return the first match found
 
             except BadRequest as e:
-                 # This catches errors if the keywords themselves are wrong for searchTracks
-                 logger.error(f"BadRequest searching Plex in library '{library.title}' for {search_term_log}: {e}. Check search keywords.")
-                 # Continue searching in the next library if one search method fails
+                 # This indicates the filter field name itself ('artist.title__iexact' etc.) is wrong
+                 logger.error(f"BadRequest searching Plex in library '{library.title}' for {search_term_log}: {e}. Filter field 'artist.title' likely incorrect.")
+                 # Since the filter is wrong, no point searching other libraries with it. Break? Or just log and continue? Let's continue for now.
             except Exception as e:
-                 logger.exception(f"Unexpected error searching Plex in library '{library.title}' for {search_term_log}: {e}") # Use exception for full trace
+                 logger.exception(f"Unexpected error searching Plex in library '{library.title}' for {search_term_log}: {e}")
                  # Continue searching in the next library
 
         # If loop finishes without finding the track
-        logger.info(f"Track {search_term_log} not found in any library after all searches.") # Change final message to INFO
+        logger.info(f"Track {search_term_log} not found in any library after all searches.")
         return None
 
     # update_playlist remains the same - it takes a specific library context for creation
