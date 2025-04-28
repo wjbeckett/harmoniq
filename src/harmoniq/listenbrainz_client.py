@@ -2,7 +2,6 @@
 import logging
 import requests
 import time
-import urllib.parse
 
 # Import config variables
 from . import config
@@ -66,73 +65,73 @@ class ListenBrainzClient:
             logger.error("Cannot make ListenBrainz request: Client not initialized or token invalid.")
             return None
 
-        # Construct URL carefully using urljoin to handle slashes
-        # Ensure endpoint doesn't start with a slash if base has one
-        relative_endpoint = endpoint.lstrip('/')
-        url = urllib.parse.urljoin(LISTENBRAINZ_API_URL, relative_endpoint)
+        # Construct URL manually, ensuring no double slashes
+        url = LISTENBRAINZ_API_URL.rstrip('/') + '/' + endpoint.lstrip('/')
 
         headers = self.auth_header.copy()
-        headers['User-Agent'] = 'Harmoniq Playlist Generator v0.3' # Keep version updated?
+        headers['User-Agent'] = 'Harmoniq Playlist Generator v0.4'
 
         # Log the final URL *before* the request
         # Prepare params string for logging (requests does this internally too)
-        query_string = urllib.parse.urlencode(params) if params else ""
+        # query_string = urllib.parse.urlencode(params) if params else "" # Need import if using this
+        query_string = "&".join([f"{k}={v}" for k,v in params.items()]) if params else ""
         full_url_for_log = f"{url}?{query_string}" if query_string else url
+        masked_headers = {k: (v[:10] + "..." if k == "Authorization" else v) for k, v in headers.items()}
         logger.debug(f"Making ListenBrainz request: GET {full_url_for_log}")
-        # logger.debug(f"Headers: {headers}") # Can be verbose, enable if needed
+        logger.debug(f"Headers: {masked_headers}")
+
 
         for attempt in range(MAX_RETRIES):
             try:
+                # First try WITHOUT params to check base endpoint existence if it's a 404 check
+                if attempt == 0: # Only try param-less on first attempt
+                     logger.debug(f"Checking base endpoint existence first (no params): GET {url}")
+                     base_response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                     logger.debug(f"Base endpoint check status code: {base_response.status_code}")
+                     # Don't raise_for_status here, just check if it's 404
+                     if base_response.status_code == 404:
+                         logger.error(f"Base endpoint {url} returned 404. Endpoint likely does not exist.")
+                         # Abort retries for this endpoint if the base path is 404
+                         return None
+                     # If base endpoint exists (e.g. 200 OK even if needs params, or 400/401), proceed with params
+
+                # Proceed with the actual request including parameters
                 response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
-                # Log status code immediately
-                logger.debug(f"Response status code: {response.status_code} from {response.url}")
-                response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                logger.debug(f"Full request response status code: {response.status_code} from {response.url}") # Log URL returned by request
+                response.raise_for_status()
 
                 try:
                      data = response.json()
                 except requests.exceptions.JSONDecodeError:
                      if response.status_code == 200 and not response.content:
                          logger.warning(f"ListenBrainz request to {endpoint} returned 200 OK with empty body.")
-                         return {} # Return empty dict for successful empty response
+                         return {}
                      else:
                          logger.error(f"Failed to decode JSON from ListenBrainz response (Status: {response.status_code}, URL: {response.url})")
-                         # Log response body if possible (might be large or non-text)
-                         try:
-                              logger.error(f"Response body: {response.text[:500]}...") # Log first 500 chars
-                         except Exception:
-                              logger.error("Could not log response body.")
-                         # Still raise original error if JSON decode failed on non-empty body
+                         try: logger.error(f"Response body: {response.text[:500]}...")
+                         except Exception: logger.error("Could not log response body.")
                          raise
-
                 return data
 
             except requests.exceptions.HTTPError as e:
-                 # Handle specific HTTP errors here for better logging/retry logic
                  status_code = e.response.status_code
                  logger.warning(f"ListenBrainz HTTP Error {status_code} (Attempt {attempt + 1}/{MAX_RETRIES}) for {e.request.url}: {e}")
-                 if status_code == 401:
-                     logger.error("ListenBrainz authentication failed (401). Check token. Aborting request.")
+                 if status_code in [401, 404, 400]: # Non-retryable errors
+                     logger.error(f"Non-retryable HTTP error {status_code}. Aborting request for {endpoint}.")
+                     # Specific message for persistent 404 on recommendations
+                     if status_code == 404 and "recommendations" in endpoint:
+                         logger.error("The recommendations endpoint returned 404. It may be unavailable or require different access.")
                      return None
-                 if status_code == 404:
-                     logger.error(f"ListenBrainz endpoint not found (404): {endpoint}. Aborting request for this endpoint.")
-                     # Specific handling for the recommendations 404
-                     if "recommendations/user" in endpoint:
-                          logger.error("This might indicate no recommendations are available for the user or an API issue.")
-                     return None # Don't retry 404
-                 # Add other status codes to handle if needed (e.g., 400 Bad Request, 429 Rate Limit)
-                 if status_code == 400:
-                      logger.error(f"ListenBrainz Bad Request (400). Check parameters. Aborting request. Details: {e.response.text}")
-                      return None # Don't retry 400
+                 # Allow retries for other HTTP errors (e.g., 5xx Server Errors)
 
-            except requests.exceptions.RequestException as e: # Catch other connection/timeout errors
+            except requests.exceptions.RequestException as e:
                 logger.warning(f"ListenBrainz connection/timeout error (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
-                # These are generally retryable
 
             except Exception as e:
-                 logger.exception(f"An unexpected error occurred during ListenBrainz request processing: {e}") # Use exception for trace
-                 return None # Don't retry on unexpected errors
+                 logger.exception(f"An unexpected error occurred during ListenBrainz request processing: {e}")
+                 return None
 
-            # Retry logic for retryable errors
+            # Retry logic
             if attempt + 1 == MAX_RETRIES:
                 logger.error(f"Max retries reached for ListenBrainz request ({endpoint}).")
                 return None
@@ -140,7 +139,7 @@ class ListenBrainzClient:
             logger.info(f"Retrying ListenBrainz request in {sleep_time} seconds...")
             time.sleep(sleep_time)
 
-        return None # Should only be reached if all retries fail
+        return None
 
 
     def get_recommendations(self, limit=config.PLAYLIST_SIZE_LISTENBRAINZ_RECS):
@@ -152,18 +151,15 @@ class ListenBrainzClient:
         # --- Attempt 1: Personalized Endpoint ---
         if self.api_user and self.auth_header:
             logger.info(f"Attempting personalized recommendations fetch for user '{self.api_user}' from ListenBrainz...")
-            # Correct documented endpoint path
             endpoint_pers = f"recommendations/user/{self.api_user}/track"
             params_pers = {'count': limit}
             data_pers = self._make_request(endpoint_pers, params=params_pers)
 
-            # --- Handling based on _make_request result ---
-            if data_pers is not None: # Request did not fail with None (e.g., it wasn't a 404/401 or max retries)
+            if data_pers is not None:
                 payload_pers = data_pers.get('payload', {})
                 raw_recs_pers = payload_pers.get('recommendations', [])
                 if raw_recs_pers:
                     logger.info("Successfully fetched data from PERSONALIZED recommendations endpoint.")
-                    # (Parsing logic remains the same)
                     for rec in raw_recs_pers:
                         track_meta = rec.get('track_metadata')
                         if track_meta:
@@ -174,14 +170,12 @@ class ListenBrainzClient:
                             else: logger.warning(f"Skipping malformed LB rec (pers): {rec}")
                         else: logger.warning(f"Skipping malformed LB rec (pers): {rec}")
                     logger.info(f"Processed {len(recommendations)} tracks from personalized recommendations.")
-                    # If we got personalized recs, RETURN them immediately
                     return recommendations[:limit]
                 else:
-                    # Endpoint returned OK, but the list was empty
-                    logger.info("Personalized recommendations endpoint returned successfully but the list was empty. Will try experimental.")
-            # else: Failure (e.g., 404) was already logged within _make_request
+                    logger.info("Personalized recommendations endpoint returned successfully but list was empty. Will try experimental.")
+            # else: Failure (404/401/etc.) already logged by _make_request
 
-        # --- Attempt 2: Experimental Endpoint (Fallback if personalized failed or returned empty) ---
+        # --- Attempt 2: Experimental Endpoint ---
         logger.info("Falling back to fetching EXPERIMENTAL track recommendations from ListenBrainz...")
         endpoint_exp = "recommendations/track/experimental"
         params_exp = {'count': limit}
@@ -189,14 +183,13 @@ class ListenBrainzClient:
 
         if data_exp is None:
              logger.error("Failed to fetch recommendations from ListenBrainz experimental endpoint as well.")
-             return [] # Both attempts failed
+             return []
 
         payload_exp = data_exp.get('payload', {})
         raw_recs_exp = payload_exp.get('recommendations', [])
 
         if raw_recs_exp:
             logger.info("Successfully fetched data from EXPERIMENTAL recommendations endpoint.")
-            # (Parsing logic remains the same)
             for rec in raw_recs_exp:
                 track_meta = rec.get('track_metadata')
                 if track_meta:
