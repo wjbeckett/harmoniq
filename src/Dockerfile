@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.10-slim as base
+FROM python:3.10-slim AS base
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
