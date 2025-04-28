@@ -120,47 +120,52 @@ class ListenBrainzClient:
             return []
 
         logger.info(f"Fetching {limit} recommendations for user '{self.api_user}' from ListenBrainz...")
-        # Note: The API uses 'count' not 'limit'
-        endpoint = f"user/{self.api_user}/recommendations/track"
+
+        endpoint = f"recommendations/user/{self.api_user}/track"
         params = {'count': limit}
 
         data = self._make_request(endpoint, params=params)
         recommendations = []
 
-        if data and 'payload' in data and 'recommendations' in data['payload']:
-            raw_recs = data['payload']['recommendations']
-            # Structure is slightly different, contains track MBIDs etc.
-            # Example: { "track_mbid": "...", "track_name": "...", "artist_mbid": "...", "artist_name": "...", "score": 0.9 }
-            for rec in raw_recs:
-                track_meta = rec.get('track_metadata', {}) # Recommendations might be inside track_metadata now? Check API docs again if needed.
-                # Let's assume simpler structure first based on example:
-                artist_name = rec.get('artist_name')
-                track_name = rec.get('track_name')
+        # Add a check here in case _make_request returns None (e.g., after 404 or other errors)
+        if data is None:
+             logger.error("Failed to fetch recommendations from ListenBrainz: No data received from API.")
+             return [] # Return empty list if the request ultimately failed
 
-                if artist_name and track_name:
-                    recommendations.append({
-                        'artist': artist_name,
-                        'title': track_name
-                        # Could also store mbid if useful later: 'mbid': rec.get('track_mbid')
-                    })
-                else:
-                    # Fallback check inside track_metadata if the simpler structure failed
-                    artist_name_meta = track_meta.get('artist_name')
-                    track_name_meta = track_meta.get('track_name')
-                    if artist_name_meta and track_name_meta:
-                         recommendations.append({
-                            'artist': artist_name_meta,
-                            'title': track_name_meta
+        # Proceed with parsing if data is not None
+        # Check structure - assuming payload.recommendations might be directly under data now based on other endpoints
+        payload = data.get('payload', {}) # Safely get payload, default to empty dict
+        raw_recs = payload.get('recommendations', []) # Safely get recommendations, default to empty list
+
+
+        if raw_recs: # Check if raw_recs is not empty
+            # Example structure: { "track_metadata": {"artist_name": "...", "track_name": "..."}, "score": 0.9 }
+            for rec in raw_recs:
+                track_meta = rec.get('track_metadata') # Recommendations are nested here
+
+                if track_meta:
+                    artist_name = track_meta.get('artist_name')
+                    track_name = track_meta.get('track_name')
+
+                    if artist_name and track_name:
+                        recommendations.append({
+                            'artist': artist_name,
+                            'title': track_name
+                            # Could also store mbid if useful later: 'mbid': track_meta.get('mbid') # Check actual key name
                         })
                     else:
-                         logger.warning(f"Skipping malformed ListenBrainz recommendation entry: {rec}")
+                        logger.warning(f"Skipping malformed ListenBrainz recommendation entry (missing artist/track name in metadata): {rec}")
+                else:
+                    logger.warning(f"Skipping malformed ListenBrainz recommendation entry (missing track_metadata): {rec}")
 
-            logger.info(f"Successfully fetched {len(recommendations)} valid recommendations from ListenBrainz.")
-        elif data:
-             logger.warning("No 'payload' or 'recommendations' key found in ListenBrainz response.")
+            logger.info(f"Successfully processed {len(recommendations)} valid recommendations from ListenBrainz.")
+        # Handle cases where payload exists but recommendations list is empty
+        elif 'payload' in data and not raw_recs :
+             logger.info("ListenBrainz returned recommendations payload, but the list is empty.")
+        else: # Handle cases where the structure was unexpected (no payload etc.)
+             logger.warning("Could not find 'payload' or 'recommendations' in the expected structure in ListenBrainz response.")
              logger.debug(f"ListenBrainz Response Data: {data}")
-        else:
-             logger.error("Failed to fetch recommendations from ListenBrainz after retries.")
+
 
         # API already gives a ranked list, limit is handled by API 'count' param
-        return recommendations[:limit] # Ensure we don't exceed limit if API returns slightly more?
+        return recommendations[:limit] # Ensure we don't exceed limit just in case
