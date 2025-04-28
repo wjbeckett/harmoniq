@@ -11,23 +11,23 @@ services:
     restart: unless-stopped
     env_file:
       - .env # Load variables from .env file for local docker-compose testing
-    environment: # You can also define variables directly here, overriding .env if needed
-      - LISTENBRAINZ_USER_TOKEN=YOUR_LISTENBRAINZ_TOKEN # Get from listenbrainz.org profile settings
+    #environment: # You can also define variables directly here, overriding .env if needed
+    #  - LISTENBRAINZ_USER_TOKEN=YOUR_LISTENBRAINZ_TOKEN # Get from listenbrainz.org profile settings
 
       # --- Last.fm Configuration (Required if Last.fm features are enabled) ---
-      - LASTFM_API_KEY= # Optional: Your Last.fm API Key
-      - LASTFM_USER=    # Optional: Your Last.fm Username
+    #  - LASTFM_API_KEY= # Optional: Your Last.fm API Key
+    #  - LASTFM_USER=    # Optional: Your Last.fm Username
 
       # --- Feature Flags (Enable/Disable specific playlist types) ---
-      - ENABLE_LISTENBRAINZ_RECS=true     # Default ON - Recommended primary source for discovery
-      - ENABLE_LASTFM_CHARTS=true         # Default ON - Good source for global charts
-      - ENABLE_LASTFM_RECS=false          # Default OFF - Use ListenBrainz recs instead if possible
-      - ENABLE_TIME_PLAYLIST=false
+    #  - ENABLE_LISTENBRAINZ_RECS=true     # Default ON - Recommended primary source for discovery
+    #  - ENABLE_LASTFM_CHARTS=true         # Default ON - Good source for global charts
+    #  - ENABLE_LASTFM_RECS=false          # Default OFF - Use ListenBrainz recs instead if possible
+    #  - ENABLE_TIME_PLAYLIST=false
       # ... rest of flags ...
 
       # --- Playlist Naming ---
-      - PLAYLIST_NAME_LISTENBRAINZ_RECS=ListenBrainz Discovery
-      - PLAYLIST_NAME_LASTFM_CHARTS=Last.fm Global Charts
-      - PLAYLIST_NAME_LASTFM_RECS=Last.fm Discovery (Derived)
+    #  - PLAYLIST_NAME_LISTENBRAINZ_RECS=ListenBrainz Discovery
+    #  - PLAYLIST_NAME_LASTFM_CHARTS=Last.fm Global Charts
+    #  - PLAYLIST_NAME_LASTFM_RECS=Last.fm Discovery (Derived)
     # volumes: # Uncomment if needed later
       # - ./logs:/app/logs

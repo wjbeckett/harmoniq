@@ -48,9 +48,9 @@ def run_playlist_update_cycle():
     # --- Get Plex Library ---
     music_library = None
     if plex_client:
-        music_library = plex_client.get_music_library(config.PLEX_MUSIC_LIBRARY_NAME)
+        music_library = plex_client.get_music_library(config.PLEX_MUSIC_LIBRARY_NAMES)
         if not music_library:
-            logger.error(f"Could not access Plex music library '{config.PLEX_MUSIC_LIBRARY_NAME}'. Aborting update cycle.")
+            logger.error(f"Could not access Plex music library '{config.PLEX_MUSIC_LIBRARY_NAMES}'. Aborting update cycle.")
             return
 
     # --- Process Enabled Playlist Types ---

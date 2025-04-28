@@ -60,7 +60,7 @@ Do you love your self-hosted music setup with Plex or Jellyfin but miss the auto
           # --- Required Plex Configuration ---
           - PLEX_URL=http://YOUR_PLEX_IP:32400 # Replace with your Plex server URL
           - PLEX_TOKEN=YOUR_PLEX_TOKEN         # Replace with your Plex token
-          - PLEX_MUSIC_LIBRARY_NAME=Music     # Replace with the EXACT name of your Plex music library
+          - PLEX_MUSIC_LIBRARY_NAMES=Music     # Replace with the EXACT name of your Plex music library
 
           # --- Scheduling & Timezone ---
           - RUN_INTERVAL_MINUTES=1440          # Update playlists daily (1440), hourly (60), etc.
@@ -126,7 +126,7 @@ Harmoniq is configured entirely through **environment variables**, as shown in t
 | :----------------------------- | :------------------------------------------------------------------------------------------------------ | :--------------- | :--------------------- |
 | `PLEX_URL`                     | Full URL of your Plex Media Server (e.g., `http://192.168.1.100:32400`)                                | **Yes**          | -                      |
 | `PLEX_TOKEN`                   | Your Plex authentication token.                                                                         | **Yes**          | -                      |
-| `PLEX_MUSIC_LIBRARY_NAME`      | The exact name of the music library in Plex to use.                                                     | **Yes**          | `Music`                |
+| `PLEX_MUSIC_LIBRARY_NAMES`      | The exact name of the music library in Plex to use.                                                     | **Yes**          | `Music`                |
 | `RUN_INTERVAL_MINUTES`         | How often (in minutes) to run the playlist update cycle.                                                | No               | `1440` (24 hours)      |
 | `TIMEZONE`                     | Timezone for interpreting time-based playlists (e.g., `America/New_York`). [List TZ database names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). | No               | `UTC`                  |
 | `LASTFM_API_KEY`               | Your Last.fm API Key.                                                                                   | If Last.fm used  | -                      |

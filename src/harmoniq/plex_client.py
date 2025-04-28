@@ -42,7 +42,7 @@ class PlexClient:
             self.plex = None
             raise
 
-    def get_music_library(self, library_name=config.PLEX_MUSIC_LIBRARY_NAME):
+    def get_music_library(self, library_name=config.PLEX_MUSIC_LIBRARY_NAMES):
         """Gets the specified music library object from the Plex server."""
         if not self.plex:
             logger.error("Cannot get library: Not connected to Plex.")
