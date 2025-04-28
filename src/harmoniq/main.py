@@ -1,31 +1,81 @@
+# src/harmoniq/main.py
 import logging
-
-# Import config variables (they are loaded when config.py is imported)
+# Import config variables
 from . import config
-
 # Import logger configured in log_config
 from .log_config import logger
-
+# Import Clients
+from .plex_client import PlexClient
+from .lastfm_client import LastfmClient
 
 def run_playlist_update_cycle():
     """
-    Placeholder for the main logic that fetches data and updates playlists.
-    In Phase 1, this will run once. In Phase 2, it will be called by the scheduler.
+    Main logic loop that connects to services, fetches data,
+    matches tracks, and updates Plex playlists.
     """
     logger.info("Starting playlist update cycle...")
 
-    # --- Phase 1: Basic Structure ---
-    logger.info(f"Plex URL: {config.PLEX_URL}")  # Log config loaded
-    logger.info(f"Last.fm User: {config.LASTFM_USER}")  # Example
+    plex_client = None
+    lastfm_client = None
 
-    # --- TODO: Implement Phase 1 Logic ---
-    # 1. Connect to Plex
-    # 2. If config.ENABLE_LASTFM_RECS:
-    #    a. Fetch Last.fm recommendations
-    #    b. Match tracks in Plex library
-    #    c. Update/Create Plex playlist (config.PLAYLIST_NAME_LASTFM_RECS)
+    # --- Connect to Services ---
+    try:
+        plex_client = PlexClient() # Connection happens in __init__
+        # Instantiate Last.fm client (it handles missing keys internally)
+        lastfm_client = LastfmClient()
+    except Exception as e:
+        logger.error(f"Failed to initialize clients: {e}. Aborting update cycle.")
+        return # Stop cycle if essential clients fail
 
-    logger.warning("Placeholder: Actual playlist generation not yet implemented.")
+    # --- Get Plex Library ---
+    music_library = None
+    if plex_client:
+        music_library = plex_client.get_music_library()
+        if not music_library:
+            logger.error("Could not access Plex music library. Aborting update cycle.")
+            return # Stop if library not found/accessible
+
+    # --- Process Enabled Playlist Types ---
+
+    # 1. Last.fm Recommendations
+    if config.ENABLE_LASTFM_RECS and lastfm_client and lastfm_client.api_key and music_library:
+        logger.info("Processing Last.fm Recommendations...")
+        recommendations = lastfm_client.get_recommendations()
+        if recommendations:
+            logger.info(f"Found {len(recommendations)} recommendations. Matching in Plex...")
+            # --- TODO: Implement Track Matching & Playlist Update ---
+            # matched_tracks = []
+            # for rec in recommendations:
+            #     plex_track = plex_client.find_track(music_library, rec['artist'], rec['title'])
+            #     if plex_track:
+            #         matched_tracks.append(plex_track)
+            # if matched_tracks:
+            #     logger.info(f"Found {len(matched_tracks)} matching tracks in Plex library.")
+            #     plex_client.update_playlist(
+            #         playlist_name=config.PLAYLIST_NAME_LASTFM_RECS,
+            #         tracks_to_add=matched_tracks,
+            #         music_library=music_library
+            #     )
+            # else:
+            #      logger.info("No matching tracks found in Plex for Last.fm recommendations.")
+            logger.warning("Placeholder: Track matching/playlist update for Last.fm Recs not yet implemented.")
+        else:
+            logger.info("No recommendations received from Last.fm.")
+    elif config.ENABLE_LASTFM_RECS:
+        logger.warning("Skipping Last.fm Recommendations: Client/Library not available or feature disabled.")
+
+    # 2. Last.fm Charts (Placeholder)
+    if config.ENABLE_LASTFM_CHARTS and lastfm_client and lastfm_client.api_key and music_library:
+        logger.info("Processing Last.fm Charts...")
+        # chart_tracks = lastfm_client.get_chart_top_tracks()
+        # ... matching and update logic ...
+        logger.warning("Placeholder: Last.fm Charts processing not yet implemented.")
+    elif config.ENABLE_LASTFM_CHARTS:
+         logger.warning("Skipping Last.fm Charts: Client/Library not available or feature disabled.")
+
+    # --- Add placeholders for other playlist types later ---
+    # if config.ENABLE_LISTENBRAINZ_RECS: ...
+    # if config.ENABLE_TIME_PLAYLIST: ...
 
     logger.info("Playlist update cycle finished.")
 
@@ -35,6 +85,5 @@ if __name__ == "__main__":
     try:
         run_playlist_update_cycle()
     except Exception as e:
-        logger.exception(f"An unexpected error occurred during the update cycle: {e}")
-        # In Phase 1, the script will exit. In Phase 2, the scheduler loop should handle this.
+        logger.exception(f"An unexpected error occurred outside the main cycle: {e}")
     logger.info("Harmoniq service finished.")
