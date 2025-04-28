@@ -7,7 +7,6 @@ from .log_config import logger
 # Import Clients
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
-from .listenbrainz_client import ListenBrainzClient
 
 def run_playlist_update_cycle():
     """
@@ -31,16 +30,6 @@ def run_playlist_update_cycle():
                  logger.warning("Last.fm client cannot be initialized. API Key or User is missing.")
                  if config.ENABLE_LASTFM_RECS: logger.warning("Disabling Last.fm Recommendations.")
                  if config.ENABLE_LASTFM_CHARTS: logger.warning("Disabling Last.fm Charts.")
-
-        if config.ENABLE_LISTENBRAINZ_RECS:
-            if config.LISTENBRAINZ_USER_TOKEN: # Required check done in config, but belt-and-suspenders
-                 lb_client = ListenBrainzClient()
-                 if lb_client and not lb_client.api_user: # Token validation failed in client __init__
-                     logger.error("ListenBrainz token validation failed. Disabling ListenBrainz Recommendations.")
-                     lb_client = None # Ensure it's None
-            else:
-                # Should have been caught by config validation, but log just in case
-                logger.error("ListenBrainz token missing despite feature being enabled. Disabling ListenBrainz Recommendations.")
 
     except ValueError as e:
          logger.error(f"Configuration value error during client initialization: {e}. Aborting cycle.")
@@ -74,50 +63,7 @@ def run_playlist_update_cycle():
     logger.info(f"Using '{target_library.title}' as the target library for creating new playlists.")
 
     # --- Process Enabled Playlist Types ---
-
-    # 1. ListenBrainz Recommendations
-    # Check lb_client exists and api_user was validated, AND we have libraries
-    if config.ENABLE_LISTENBRAINZ_RECS and lb_client and lb_client.api_user and valid_music_libraries:
-        logger.info("Processing ListenBrainz Recommendations...")
-        recommendations = lb_client.get_recommendations(limit=config.PLAYLIST_SIZE_LISTENBRAINZ_RECS)
-        if recommendations:
-            logger.info(f"Fetched {len(recommendations)} recommendations from ListenBrainz. Matching in Plex...")
-
-            matched_tracks_lb = []
-            not_found_count_lb = 0
-            for i, rec in enumerate(recommendations):
-                logger.debug(f"Matching LB {i+1}/{len(recommendations)}: '{rec['artist']} - {rec['title']}'")
-                # Pass the LIST of libraries to search through
-                plex_track = plex_client.find_track(valid_music_libraries, rec['artist'], rec['title'])
-                if plex_track:
-                    matched_tracks_lb.append(plex_track)
-                else:
-                    # Logging now happens inside find_track if not found after checking all libs
-                    # logger.info(f"LB Track not found in Plex: {rec['artist']} - {rec['title']}") # Redundant
-                    not_found_count_lb += 1
-
-            logger.info(f"ListenBrainz Matching complete. Found {len(matched_tracks_lb)} tracks across configured libraries. {not_found_count_lb} recommended tracks not found in any library.")
-
-            if matched_tracks_lb:
-                # Pass the TARGET library for creation context
-                success = plex_client.update_playlist(
-                    playlist_name=config.PLAYLIST_NAME_LISTENBRAINZ_RECS,
-                    tracks_to_add=matched_tracks_lb,
-                    music_library=target_library # Use first library for creation context
-                )
-                if success:
-                     logger.info(f"Successfully updated '{config.PLAYLIST_NAME_LISTENBRAINZ_RECS}' playlist in Plex.")
-                else:
-                     logger.error(f"Failed to update '{config.PLAYLIST_NAME_LISTENBRAINZ_RECS}' playlist in Plex.")
-            else:
-                 logger.info("No matching tracks found in Plex for ListenBrainz recommendations. Playlist not created/updated.")
-        else:
-            logger.info("No recommendations received from ListenBrainz.")
-    elif config.ENABLE_LISTENBRAINZ_RECS:
-        logger.warning("Skipping ListenBrainz Recommendations: Client not available/validated, no valid libraries, or feature disabled.")
-
-
-    # 2. Last.fm Recommendations (Optional/Fallback)
+    # 1. Last.fm Recommendations
     if config.ENABLE_LASTFM_RECS and lastfm_client and valid_music_libraries: # Check for lastfm_client instance
         logger.info("Processing Last.fm Recommendations (Derived)...")
         recommendations_fm = lastfm_client.get_recommendations(limit=config.PLAYLIST_SIZE_LASTFM_RECS)
@@ -156,7 +102,7 @@ def run_playlist_update_cycle():
         logger.warning("Skipping Last.fm Recommendations: Client not available, no valid libraries, or feature disabled.")
 
 
-    # 3. Last.fm Charts (Optional)
+    # 2. Last.fm Charts (Optional)
     if config.ENABLE_LASTFM_CHARTS and lastfm_client and valid_music_libraries: # Check for lastfm_client instance
         logger.info("Processing Last.fm Charts...")
         chart_tracks_data = lastfm_client.get_chart_top_tracks(limit=config.PLAYLIST_SIZE_LASTFM_CHARTS)

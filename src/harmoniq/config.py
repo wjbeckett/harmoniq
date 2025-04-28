@@ -52,25 +52,19 @@ try:
     LASTFM_API_KEY = get_env_var("LASTFM_API_KEY")
     LASTFM_USER = get_env_var("LASTFM_USER")
 
-    # ListenBrainz (Required only if enabled)
-    LISTENBRAINZ_USER_TOKEN = get_env_var("LISTENBRAINZ_USER_TOKEN")
-
     # Feature Flags (Defaults adjusted)
-    ENABLE_LISTENBRAINZ_RECS = get_env_var("ENABLE_LISTENBRAINZ_RECS", default=True, var_type=bool) # Default ON
     ENABLE_LASTFM_RECS = get_env_var("ENABLE_LASTFM_RECS", default=False, var_type=bool) # Default OFF
     ENABLE_LASTFM_CHARTS = get_env_var("ENABLE_LASTFM_CHARTS", default=True, var_type=bool) # Default ON
     ENABLE_TIME_PLAYLIST = get_env_var("ENABLE_TIME_PLAYLIST", default=False, var_type=bool)
     # ENABLE_CUSTOM_1 = get_env_var("ENABLE_CUSTOM_1", default=False, var_type=bool)
 
     # Playlist Naming
-    PLAYLIST_NAME_LISTENBRAINZ_RECS = get_env_var("PLAYLIST_NAME_LISTENBRAINZ_RECS", "ListenBrainz Discovery")
     PLAYLIST_NAME_LASTFM_RECS = get_env_var("PLAYLIST_NAME_LASTFM_RECS", "Last.fm Discovery")
     PLAYLIST_NAME_LASTFM_CHARTS = get_env_var("PLAYLIST_NAME_LASTFM_CHARTS", "Last.fm Global Charts")
     PLAYLIST_NAME_TIME = get_env_var("PLAYLIST_NAME_TIME", "Daily Flow")
     # PLAYLIST_NAME_CUSTOM_1 = get_env_var("PLAYLIST_NAME_CUSTOM_1", "My Custom Playlist")
 
     # Playlist Sizing
-    PLAYLIST_SIZE_LISTENBRAINZ_RECS = get_env_var("PLAYLIST_SIZE_LISTENBRAINZ_RECS", 30, var_type=int)
     PLAYLIST_SIZE_LASTFM_RECS = get_env_var("PLAYLIST_SIZE_LASTFM_RECS", 30, var_type=int)
     PLAYLIST_SIZE_LASTFM_CHARTS = get_env_var("PLAYLIST_SIZE_LASTFM_CHARTS", 50, var_type=int)
     PLAYLIST_SIZE_TIME = get_env_var("PLAYLIST_SIZE_TIME", 40, var_type=int)
@@ -83,10 +77,6 @@ try:
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
 
     # --- Post-load Validation ---
-    if ENABLE_LISTENBRAINZ_RECS and not LISTENBRAINZ_USER_TOKEN:
-        # Make this an error now as it's the primary recommendation source
-        logger.error("ListenBrainz recommendations enabled but LISTENBRAINZ_USER_TOKEN is missing.")
-        raise ValueError("LISTENBRAINZ_USER_TOKEN is required when ENABLE_LISTENBRAINZ_RECS is true.")
 
     if (ENABLE_LASTFM_RECS or ENABLE_LASTFM_CHARTS) and (not LASTFM_API_KEY or not LASTFM_USER):
         logger.warning("Last.fm features enabled but LASTFM_API_KEY or LASTFM_USER is missing.")
@@ -97,7 +87,6 @@ try:
         logger.debug(f"PLEX_URL: {PLEX_URL}")
         logger.debug(f"PLEX_MUSIC_LIBRARY_NAMES: {PLEX_MUSIC_LIBRARY_NAMES}")
         logger.debug(f"RUN_INTERVAL_MINUTES: {RUN_INTERVAL_MINUTES}")
-        logger.debug(f"ENABLE_LISTENBRAINZ_RECS: {ENABLE_LISTENBRAINZ_RECS}")
         logger.debug(f"ENABLE_LASTFM_CHARTS: {ENABLE_LASTFM_CHARTS}")
         # Add other relevant non-sensitive vars here
 
