@@ -35,7 +35,6 @@ def get_env_var(var_name, default=None, required=False, var_type=str):
 
 # --- Load Configuration Settings ---
 try:
-    # ... (Plex, Scheduling, Last.fm vars remain the same) ...
     PLEX_URL = get_env_var("PLEX_URL", required=True)
     PLEX_TOKEN = get_env_var("PLEX_TOKEN", required=True)
     PLEX_MUSIC_LIBRARY_NAMES = get_env_var("PLEX_MUSIC_LIBRARY_NAMES", default="Music", required=True, var_type=list)
@@ -62,49 +61,39 @@ try:
     # --- Time Playlist Configuration Parsing (REVISED LOGIC) ---
     TIME_WINDOWS_RAW = get_env_var("TIME_WINDOWS", default="")
     TIME_WINDOWS_CONFIG = []
-    # Regex to specifically match the time part HH:MM-HH:MM at the beginning
     time_regex = re.compile(r"^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})")
+
+    logger.debug(f"Checking condition: ENABLE_TIME_PLAYLIST is '{os.environ.get('ENABLE_TIME_PLAYLIST', 'Not Set')}' raw from env")
+    logger.debug(f"Checking condition: ENABLE_TIME_PLAYLIST parsed as {ENABLE_TIME_PLAYLIST} (Type: {type(ENABLE_TIME_PLAYLIST)})")
+    logger.debug(f"Checking condition: TIME_WINDOWS_RAW is '{TIME_WINDOWS_RAW}' (Length: {len(TIME_WINDOWS_RAW)})")
+    logger.debug(f"Checking condition: Boolean evaluation of (ENABLE_TIME_PLAYLIST and TIME_WINDOWS_RAW) is {bool(ENABLE_TIME_PLAYLIST and TIME_WINDOWS_RAW)}")
 
     if ENABLE_TIME_PLAYLIST and TIME_WINDOWS_RAW:
         logger.info("Parsing TIME_WINDOWS configuration...")
         # Split by semicolon initially
         parts = [p.strip() for p in TIME_WINDOWS_RAW.strip().split(';') if p.strip()]
-
         current_window_data = None
-
         for part in parts:
             time_match = time_regex.match(part)
-
             if time_match:
-                # --- Start of a new window definition ---
-                # 1. Finalize the previous window if it exists
                 if current_window_data:
                     if not any(current_window_data['criteria'].values()):
                          logger.warning(f"Finalizing window starting {current_window_data['start_hour']}:00, but no valid criteria were found. Skipping window.")
                     else:
                          logger.debug(f"Finalizing window: Start={current_window_data['start_hour']}, End={current_window_data['end_hour']}, Criteria={current_window_data['criteria']}")
                          TIME_WINDOWS_CONFIG.append(current_window_data)
-
-                # 2. Parse the new time range
                 start_h, start_m, end_h, end_m = map(int, time_match.groups())
                 if not (0 <= start_h < 24 and 0 <= start_m < 60 and 0 <= end_h < 24 and 0 <= end_m < 60):
                     logger.warning(f"Skipping invalid time window definition (invalid hour/minute values): '{part}'")
-                    current_window_data = None # Discard current if time is invalid
-                    continue
-                start_hour = start_h
-                end_hour = end_h # Exclusive
-
-                # 3. Initialize data for the new window
+                    current_window_data = None; continue
+                start_hour = start_h; end_hour = end_h
                 current_window_data = {
                     'start_hour': start_hour,
                     'end_hour': end_hour,
-                    'criteria': {'moods': [], 'styles': []} # Initialize criteria dict
+                    'criteria': {'moods': [], 'styles': []}
                 }
-
-                # 4. Check if there are criteria attached to this same part (after the time and ':')
                 criteria_str_part = part[time_match.end():].lstrip(':').strip()
                 if criteria_str_part:
-                    # Parse these initial criteria
                     if '=' in criteria_str_part:
                         key, value_str = criteria_str_part.split('=', 1)
                         key = key.strip().lower()
@@ -118,7 +107,6 @@ try:
                          logger.warning(f"Invalid initial criteria format (missing '=') in part: '{criteria_str_part}'")
 
             elif current_window_data:
-                # --- Continuation of criteria for the current window ---
                 if '=' in part:
                     key, value_str = part.split('=', 1)
                     key = key.strip().lower()
@@ -131,10 +119,8 @@ try:
                 else:
                     logger.warning(f"Invalid criteria format (missing '=') in part: '{part}' for window starting {current_window_data['start_hour']}:00")
             else:
-                # This part is not a time definition and we don't have an active window
                 logger.warning(f"Skipping definition part '{part}' as it's not a time range and no window is active.")
 
-        # --- Finalize the very last window after the loop ---
         if current_window_data:
             if not any(current_window_data['criteria'].values()):
                  logger.warning(f"Finalizing last window starting {current_window_data['start_hour']}:00, but no valid criteria were found. Skipping window.")
@@ -142,15 +128,12 @@ try:
                  logger.debug(f"Finalizing last window: Start={current_window_data['start_hour']}, End={current_window_data['end_hour']}, Criteria={current_window_data['criteria']}")
                  TIME_WINDOWS_CONFIG.append(current_window_data)
 
-
-        # --- Post-parsing validation ---
         if not TIME_WINDOWS_CONFIG:
              logger.warning("ENABLE_TIME_PLAYLIST is true, but no valid TIME_WINDOWS definitions were successfully parsed. Time playlist will not be generated.")
              # ENABLE_TIME_PLAYLIST = False # Optionally disable
         else:
              # Sanity check for overlapping hours could be added here if needed
              logger.info(f"Successfully parsed {len(TIME_WINDOWS_CONFIG)} time window definitions.")
-
 
     elif ENABLE_TIME_PLAYLIST:
          logger.warning("ENABLE_TIME_PLAYLIST is true, but TIME_WINDOWS environment variable is empty or missing. Time playlist will not be generated.")
@@ -164,7 +147,6 @@ try:
         logger.warning("Last.fm features enabled but LASTFM_API_KEY or LASTFM_USER is missing. Last.fm features will be disabled.")
 
     logger.info("Configuration loaded successfully.")
-    # (DEBUG logging...)
 
 except ValueError as e: logger.error(f"Configuration error: {e}"); raise SystemExit(f"Configuration error: {e}")
 except Exception as e: logger.exception(f"Unexpected error during configuration loading: {e}"); raise SystemExit(f"Unexpected configuration loading error: {e}")
