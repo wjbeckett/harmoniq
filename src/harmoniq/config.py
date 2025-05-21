@@ -142,13 +142,30 @@ try:
     TIME_PLAYLIST_MIN_RATING = get_env_var("TIME_PLAYLIST_MIN_RATING", default=0, var_type=int)
     TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS = get_env_var("TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS", default=0, var_type=int)
     TIME_PLAYLIST_MAX_SKIP_COUNT = get_env_var("TIME_PLAYLIST_MAX_SKIP_COUNT", default=999, var_type=int)
+
+    TIME_PLAYLIST_USE_SONIC_EXPANSION = get_env_var("TIME_PLAYLIST_USE_SONIC_EXPANSION", default=False, var_type=bool)
+    TIME_PLAYLIST_SONIC_SEED_TRACKS = get_env_var("TIME_PLAYLIST_SONIC_SEED_TRACKS", default=3, var_type=int)
+    TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED = get_env_var("TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED", default=5, var_type=int)
+    TIME_PLAYLIST_SONIC_MAX_DISTANCE = get_env_var("TIME_PLAYLIST_SONIC_MAX_DISTANCE", default=0.4, var_type=float)
+    TIME_PLAYLIST_FINAL_MIX_RATIO = get_env_var("TIME_PLAYLIST_FINAL_MIX_RATIO", default=0.5, var_type=float)
     
     # Logging Level
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
 
     # --- Post-load Validation ---
     if (ENABLE_LASTFM_RECS or ENABLE_LASTFM_CHARTS) and (not LASTFM_API_KEY or not LASTFM_USER):
-        logger.warning("Last.fm features enabled but LASTFM_API_KEY or LASTFM_USER is missing. Last.fm features will be disabled.")
+        logger.warning("Last.fm features enabled but API Key/User missing. These features will be skipped.")
+    
+    if TIME_PLAYLIST_USE_SONIC_EXPANSION:
+        if not (0.0 <= TIME_PLAYLIST_FINAL_MIX_RATIO <= 1.0):
+            logger.warning("TIME_PLAYLIST_FINAL_MIX_RATIO must be between 0.0 and 1.0. Defaulting to 0.5")
+            TIME_PLAYLIST_FINAL_MIX_RATIO = 0.5
+        if TIME_PLAYLIST_SONIC_SEED_TRACKS <= 0:
+            logger.warning("TIME_PLAYLIST_SONIC_SEED_TRACKS must be positive. Disabling sonic expansion.")
+            TIME_PLAYLIST_USE_SONIC_EXPANSION = False
+        if TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED <= 0:
+            logger.warning("TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED must be positive. Disabling sonic expansion.")
+            TIME_PLAYLIST_USE_SONIC_EXPANSION = False
 
     logger.info("Configuration loaded successfully.")
 
