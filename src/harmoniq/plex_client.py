@@ -2,7 +2,7 @@
 import logging
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pytz
 
 from plexapi.server import PlexServer
@@ -115,23 +115,23 @@ class PlexClient:
                  logger.exception(f"Unexpected error searching Plex in library '{library.title}' for {search_term_log}: {e}")
         logger.info(f"Track {search_term_log} not found in any library after all searches."); return None
 
-    def _apply_common_filters(self, tracks: list[PlexApiTrack]) -> list[PlexApiTrack]:
-        """Helper function to apply rating, recency, and skip filters."""
-        if not tracks:
-            return []
+    def _apply_common_filters(self, tracks: list[PlexApiTrack], is_historical_track_list: bool = False) -> list[PlexApiTrack]:
+        """
+        Helper function to apply rating, recency, and skip filters.
+        For historical tracks, the recency filter is skipped IF it's their first pass.
+        """
+        if not tracks: return []
             
-        logger.debug(f"Applying common filters to {len(tracks)} tracks...")
+        logger.debug(f"Applying common filters to {len(tracks)} tracks (Historical list: {is_historical_track_list})...")
         filtered_tracks = []
-        min_rating_stars = config.TIME_PLAYLIST_MIN_RATING
+        # Use general min rating for non-historical, specific history min rating for historical
+        min_rating_stars = config.TIME_PLAYLIST_HISTORY_MIN_RATING if is_historical_track_list else config.TIME_PLAYLIST_MIN_RATING
         
         exclude_cutoff_date = None
         if config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS > 0:
             try:
-                current_timezone = pytz.timezone(config.TIMEZONE)
-                now_aware = datetime.now(current_timezone)
-            except pytz.exceptions.UnknownTimeZoneError:
-                logger.warning(f"Unknown timezone '{config.TIMEZONE}' for recency filter, using UTC.")
-                now_aware = datetime.now(pytz.utc)
+                current_timezone = pytz.timezone(config.TIMEZONE); now_aware = datetime.now(current_timezone)
+            except pytz.exceptions.UnknownTimeZoneError: logger.warning(f"Unknown timezone '{config.TIMEZONE}' for recency filter, using UTC."); now_aware = datetime.now(pytz.utc)
             exclude_cutoff_date = now_aware - timedelta(days=config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS)
             logger.debug(f"Recency filter: Excluding tracks played since {exclude_cutoff_date.strftime('%Y-%m-%d') if exclude_cutoff_date else 'N/A'}")
 
@@ -139,27 +139,30 @@ class PlexClient:
 
         for track in tracks:
             # Rating check
-            if min_rating_stars > 0:
+            if min_rating_stars > 0: # Only apply if a minimum is set
                 user_rating_plex = track.userRating if hasattr(track, 'userRating') else None
-                if user_rating_plex is None: pass # Keep unrated
-                else:
+                if user_rating_plex is None: # Unrated
+                    if not is_historical_track_list: pass # Keep unrated for discovery pool
+                    # For historical, if min_rating is set, unrated probably shouldn't count as a "favorite" unless min_rating is 0
+                    elif is_historical_track_list and min_rating_stars > 0: # If historical and min_rating is set, unrated don't pass
+                        logger.debug(f"Excluding (Historical Unrated): '{track.title}' (Min rating for history: {min_rating_stars} stars)")
+                        continue
+                else: # Rated
                     user_rating_stars = user_rating_plex / 2.0
                     if user_rating_stars < min_rating_stars:
                         logger.debug(f"Excluding (Rating): '{track.title}' (Rated: {user_rating_stars:.1f} < Min: {min_rating_stars} stars)")
                         continue
             
-            # Recency check
+            # Recency check - *always* apply this common filter, even to historical tracks,
+            # to avoid adding something that was just played yesterday to the "Daily Flow".
+            # The "lookback_days" for fetching historical tracks is different from this "don't play again for X days" filter.
             if exclude_cutoff_date and track.lastViewedAt:
-                # Ensure track.lastViewedAt is timezone-aware
-                # Plex stores datetimes as naive UTC, so localize to UTC then convert.
                 try:
                     track_last_played_aware = track.lastViewedAt.replace(tzinfo=pytz.utc).astimezone(exclude_cutoff_date.tzinfo)
                     if track_last_played_aware >= exclude_cutoff_date:
                         logger.debug(f"Excluding (Recency): '{track.title}' (Last played: {track_last_played_aware.strftime('%Y-%m-%d')})")
                         continue
-                except Exception as tz_err:
-                    logger.warning(f"Could not perform timezone conversion for recency check on track '{track.title}': {tz_err}")
-
+                except Exception as tz_err: logger.warning(f"Could not perform timezone conversion for recency check on track '{track.title}': {tz_err}")
             
             # Skip count check
             skip_count = track.skipCount if hasattr(track, 'skipCount') and track.skipCount is not None else 0
@@ -168,7 +171,7 @@ class PlexClient:
                 continue
             
             filtered_tracks.append(track)
-        logger.debug(f"{len(filtered_tracks)} tracks remaining after common filters.")
+        logger.debug(f"{len(filtered_tracks)} tracks remaining after common filters (Historical list: {is_historical_track_list}).")
         return filtered_tracks
     
     def _similarity_score(self, current_track: PlexApiTrack, candidate_track: PlexApiTrack,
@@ -234,136 +237,233 @@ class PlexClient:
         logger.info(f"Greedy sonic sort complete. Sorted {len(sorted_playlist)} tracks.")
         return sorted_playlist
 
+    def _get_historical_favorites(self,
+                                 libraries: list[LibrarySection],
+                                 moods_to_match: list[str],
+                                 genres_to_match: list[str]) -> list[PlexApiTrack]:
+        """
+        Fetches historical tracks that match current criteria and configured history preferences.
+        """
+        if not config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS:
+            return []
+
+        logger.info(f"Fetching historical favorites: Lookback={config.TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS}d, MinPlays={config.TIME_PLAYLIST_HISTORY_MIN_PLAYS}, MinHistRatingStars={config.TIME_PLAYLIST_HISTORY_MIN_RATING}")
+        
+        historical_candidates = []
+        history_rating_keys = set()
+        
+        # Ensure lookback_days is positive
+        lookback_days = config.TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS
+        if lookback_days <= 0:
+            logger.debug("History lookback days is not positive, skipping historical fetch.")
+            return []
+
+        # Plex history mindate requires a datetime object
+        # Server time is UTC, so use UTC for mindate.
+        mindate_history = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+
+        for library in libraries:
+            logger.debug(f"Fetching history from library: '{library.title}' since {mindate_history.strftime('%Y-%m-%d')}")
+            try:
+                # .history() can be slow on large libraries if not filtered well by Plex server itself.
+                # We fetch, then filter in Python for mood/genre/playcount/rating.
+                history_items = library.history(mindate=mindate_history, maxresults=1000) # Limit raw history fetch
+                
+                for track in history_items:
+                    if not isinstance(track, PlexApiTrack): continue # Should only be tracks
+                    if track.ratingKey in history_rating_keys: continue # Already processed
+
+                    # 1. Play Count Filter
+                    view_count = track.viewCount if hasattr(track, 'viewCount') and track.viewCount is not None else 0
+                    if view_count < config.TIME_PLAYLIST_HISTORY_MIN_PLAYS:
+                        continue
+
+                    # 2. Rating Filter (for historical tracks)
+                    if config.TIME_PLAYLIST_HISTORY_MIN_RATING > 0:
+                        user_rating_plex = track.userRating if hasattr(track, 'userRating') else None
+                        if user_rating_plex is None: # Unrated historical tracks don't pass if min rating is set
+                            continue
+                        user_rating_stars = user_rating_plex / 2.0
+                        if user_rating_stars < config.TIME_PLAYLIST_HISTORY_MIN_RATING:
+                            continue
+                    
+                    # 3. Mood Filter (track has AT LEAST ONE of the target moods)
+                    if moods_to_match: # Only filter if moods are specified for the window
+                        track_moods_lower = [m.tag.lower() for m in track.moods] if hasattr(track, 'moods') else []
+                        if not any(m.lower() in track_moods_lower for m in moods_to_match):
+                            continue
+                    
+                    # 4. Genre Filter (track has AT LEAST ONE of the target genres)
+                    if genres_to_match: # Only filter if genres are specified for the window
+                        track_genres_lower = [g.tag.lower() for g in track.genres] if hasattr(track, 'genres') else []
+                        if not any(g.lower() in track_genres_lower for g in genres_to_match):
+                            continue
+                    
+                    # If all filters passed
+                    logger.debug(f"Found historical candidate: '{track.title}' (Plays: {view_count}, Rating: {track.userRating/2 if track.userRating else 'N/A'})")
+                    historical_candidates.append(track)
+                    history_rating_keys.add(track.ratingKey)
+
+            except Exception as e:
+                logger.exception(f"Error fetching/processing history from library '{library.title}': {e}")
+
+        logger.info(f"Found {len(historical_candidates)} raw historical candidates matching criteria.")
+        # The common filters (especially recency) will be applied to these later if they are chosen
+        return historical_candidates
+
+        # In class PlexClient:
+
     def find_tracks_by_criteria(self,
                                 libraries: list[LibrarySection],
                                 moods: list[str] = None,
-                                styles: list[str] = None,
-                                limit: int = 50):
+                                styles: list[str] = None, # Treated as genres
+                                limit: int = config.PLAYLIST_SIZE_TIME): # Use config for default
         """
         Finds tracks across specified libraries matching ANY of the given moods
         AND ANY of the given styles (genres), applying configured refinements
         and potentially expanding with sonically similar tracks.
         """
+        # Ensure limit is positive, fallback if config somehow allows non-positive
+        actual_limit = limit if limit > 0 else 40 
+        if limit <= 0 :
+             logger.warning(f"Configured limit for time playlist ({limit}) is not positive. Defaulting to 40.")
+
         if not libraries:
             logger.error("Cannot find tracks by criteria: No libraries provided.")
             return []
 
-        moods_to_match_plex = moods if moods else []
-        genres_to_match_plex = styles if styles else []
+        moods_to_match = moods if moods else [] 
+        genres_to_match = styles if styles else [] 
 
-        logger.info(f"Searching for tracks with Moods: {moods_to_match_plex or 'Any'} AND Genres: {genres_to_match_plex or 'Any'}")
+        logger.info(f"Searching for tracks with Moods: {moods_to_match or 'Any'} AND Genres: {genres_to_match or 'Any'}")
+        logger.info(f"Targeting up to {actual_limit} tracks for the playlist.") # Log the actual limit being used
         logger.info(f"Refinement settings: MinRatingStars={config.TIME_PLAYLIST_MIN_RATING}, ExcludePlayedDays={config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS}, MaxSkipCount={config.TIME_PLAYLIST_MAX_SKIP_COUNT}")
         if config.TIME_PLAYLIST_USE_SONIC_EXPANSION:
             logger.info(f"Sonic Expansion: Enabled (Seeds={config.TIME_PLAYLIST_SONIC_SEED_TRACKS}, PerSeed={config.TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED}, MaxDist={config.TIME_PLAYLIST_SONIC_MAX_DISTANCE}, MixRatio={config.TIME_PLAYLIST_FINAL_MIX_RATIO})")
-        
-        initial_candidate_tracks_mood_genre = []
-        all_fetched_rating_keys = set()
+        if config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS:
+             logger.info(f"History Integration: Enabled (Lookback={config.TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS}d, MinPlays={config.TIME_PLAYLIST_HISTORY_MIN_PLAYS}, MinHistRating={config.TIME_PLAYLIST_HISTORY_MIN_RATING}*, TargetCount={config.TIME_PLAYLIST_TARGET_HISTORY_COUNT})")
 
+        # 1. Fetch Historical Favorites
+        historical_favorites = []
+        if config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS:
+            historical_favorites = self._get_historical_favorites(libraries, moods_to_match, genres_to_match)
+            historical_favorites = self._apply_common_filters(historical_favorites, is_historical_track_list=True)
+            logger.info(f"{len(historical_favorites)} historical favorites remaining after common filters.")
+
+        # 2. Fetch Mood/Genre Tracks (Discovery Pool)
+        initial_candidate_tracks_mood_genre = []
+        all_mood_genre_keys = set(t.ratingKey for t in historical_favorites) 
         for library in libraries:
             logger.debug(f"Searching for mood/genre tracks in library: '{library.title}'")
             plex_filters = {}
-            if moods_to_match_plex: plex_filters['track.mood'] = moods_to_match_plex
-            if genres_to_match_plex: plex_filters['track.genre'] = genres_to_match_plex
-
-            if not plex_filters:
-                logger.info(f"No mood or genre criteria for '{library.title}'. Skipping library for mood/genre search.")
-                continue
+            if moods_to_match: plex_filters['track.mood'] = moods_to_match
+            if genres_to_match: plex_filters['track.genre'] = genres_to_match
+            if not plex_filters: logger.info(f"No mood or genre criteria for '{library.title}'. Skipping."); continue
             try:
                 logger.debug(f"Plex mood/genre search in '{library.title}' with filters: {plex_filters}")
-                MAX_FETCH_MOOD_GENRE = limit * 10 # Increased pool
+                MAX_FETCH_MOOD_GENRE = (actual_limit + config.TIME_PLAYLIST_TARGET_HISTORY_COUNT) * 10
                 tracks_from_plex = library.search(libtype='track', limit=MAX_FETCH_MOOD_GENRE, filters=plex_filters)
                 logger.debug(f"Found {len(tracks_from_plex)} tracks initially matching mood/genre in '{library.title}'.")
                 for track in tracks_from_plex:
-                    if track.ratingKey not in all_fetched_rating_keys:
+                    if track.ratingKey not in all_mood_genre_keys:
                         initial_candidate_tracks_mood_genre.append(track)
-                        all_fetched_rating_keys.add(track.ratingKey)
+                        all_mood_genre_keys.add(track.ratingKey)
             except BadRequest as e: logger.error(f"BadRequest searching by mood/genre in '{library.title}': {e}.")
             except Exception as e: logger.exception(f"Unexpected error searching by mood/genre in '{library.title}': {e}")
-        
-        logger.info(f"Found {len(initial_candidate_tracks_mood_genre)} total unique candidate tracks from mood/genre search.")
+        logger.info(f"Found {len(initial_candidate_tracks_mood_genre)} unique new candidate tracks from mood/genre search.")
+        refined_mood_genre_tracks = self._apply_common_filters(initial_candidate_tracks_mood_genre, is_historical_track_list=False)
+        logger.info(f"{len(refined_mood_genre_tracks)} new mood/genre tracks remaining after common filters.")
 
-        refined_mood_genre_tracks = self._apply_common_filters(initial_candidate_tracks_mood_genre)
-        logger.info(f"{len(refined_mood_genre_tracks)} tracks remaining after applying common filters to mood/genre pool.")
-
+        # 3. Sonic Expansion
         sonically_expanded_pool_filtered = []
-        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and refined_mood_genre_tracks:
-            logger.info("Sonic expansion enabled. Selecting seed tracks...")
-            
-            num_seeds = min(config.TIME_PLAYLIST_SONIC_SEED_TRACKS, len(refined_mood_genre_tracks))
+        combined_seed_pool = list(historical_favorites) + list(refined_mood_genre_tracks)
+        random.shuffle(combined_seed_pool)
+        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and combined_seed_pool:
+            logger.info("Sonic expansion enabled. Selecting seed tracks from combined pool...")
+            num_seeds = min(config.TIME_PLAYLIST_SONIC_SEED_TRACKS, len(combined_seed_pool))
             if num_seeds > 0:
-                seed_tracks = random.sample(refined_mood_genre_tracks, k=num_seeds)
+                seed_tracks = random.sample(combined_seed_pool, k=num_seeds)
                 logger.info(f"Selected {len(seed_tracks)} seed tracks for sonic expansion.")
-
-                current_playlist_candidate_keys = set(t.ratingKey for t in refined_mood_genre_tracks)
-
+                current_playlist_candidate_keys = set(t.ratingKey for t in combined_seed_pool)
                 temp_sonic_candidates = []
                 for i, seed_track in enumerate(seed_tracks):
                     logger.debug(f"Fetching sonically similar for seed {i+1}/{num_seeds}: '{seed_track.title}' by '{seed_track.artist().title if seed_track.artist() else 'N/A'}'")
                     try:
                         time.sleep(0.1)
-                        similar = seed_track.sonicallySimilar(
-                            limit=config.TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED,
-                            maxDistance=config.TIME_PLAYLIST_SONIC_MAX_DISTANCE
-                        )
+                        similar = seed_track.sonicallySimilar(limit=config.TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED, maxDistance=config.TIME_PLAYLIST_SONIC_MAX_DISTANCE)
                         logger.debug(f"Found {len(similar)} raw sonically similar tracks for '{seed_track.title}'.")
                         for s_track in similar:
                             if s_track.ratingKey not in current_playlist_candidate_keys:
                                 temp_sonic_candidates.append(s_track)
                                 current_playlist_candidate_keys.add(s_track.ratingKey)
-                    except PlexApiException as e: logger.warning(f"Could not get sonically similar for '{seed_track.title}': {e}")
-                    except Exception as e: logger.exception(f"Error fetching sonically similar for '{seed_track.title}': {e}")
-                
+                    except PlexApiException as e: logger.warning(f"Could not get sonically similar for '{seed_track.title}' (PlexApiException): {e}")
+                    except Exception as e: logger.exception(f"Unexpected error fetching sonically similar for '{seed_track.title}': {e}")
                 logger.info(f"Collected {len(temp_sonic_candidates)} initial unique sonically similar tracks (before filtering).")
-                sonically_expanded_pool_filtered = self._apply_common_filters(temp_sonic_candidates)
+                sonically_expanded_pool_filtered = self._apply_common_filters(temp_sonic_candidates, is_historical_track_list=False)
                 logger.info(f"{len(sonically_expanded_pool_filtered)} sonically similar tracks remaining after common filters.")
-            else:
-                logger.info("Not enough refined mood/genre tracks to select seeds for sonic expansion.")
+            else: logger.info("Not enough tracks in combined pool to select seeds for sonic expansion.")
 
-        final_candidate_pool = list(refined_mood_genre_tracks)
+        # 4. Combine, Prioritize History, and Select Final Tracks
+        final_candidate_pool = []
+        num_history_added = 0
+        if config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS and historical_favorites:
+            # Shuffle historical favorites before picking to vary which ones get priority if more than target
+            random.shuffle(historical_favorites) 
+            for hist_track in historical_favorites:
+                if len(final_candidate_pool) < config.TIME_PLAYLIST_TARGET_HISTORY_COUNT:
+                    final_candidate_pool.append(hist_track)
+                    # num_history_added += 1 # Already tracked by len(final_candidate_pool) in this section
+                else: break
+            logger.info(f"Added {len(final_candidate_pool)} prioritized historical tracks to the pool.")
+
+        # Combine remaining pools (refined mood/genre + filtered sonic)
+        remaining_discovery_pool = []
+        # Use a set for efficient checking of already added historical tracks' keys
+        added_keys = set(t.ratingKey for t in final_candidate_pool) 
+
+        for track in refined_mood_genre_tracks:
+            if track.ratingKey not in added_keys:
+                remaining_discovery_pool.append(track)
+                added_keys.add(track.ratingKey) # Add to set as it's now considered for this pool
+        
         if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and sonically_expanded_pool_filtered:
-            num_mood_genre_current = len(final_candidate_pool); num_sonic_to_add = 0
-            if 0.0 < config.TIME_PLAYLIST_FINAL_MIX_RATIO < 1.0:
-                target_sonic_count = int(limit * config.TIME_PLAYLIST_FINAL_MIX_RATIO)
-                target_mood_genre_count = limit - target_sonic_count
-                if len(final_candidate_pool) > target_mood_genre_count: final_candidate_pool = random.sample(final_candidate_pool, k=target_mood_genre_count)
-                num_mood_genre_current = len(final_candidate_pool)
-                num_sonic_to_add = min(len(sonically_expanded_pool_filtered), limit - num_mood_genre_current, target_sonic_count)
-            else: num_sonic_to_add = min(len(sonically_expanded_pool_filtered), limit - num_mood_genre_current)
-            if num_sonic_to_add > 0:
-                sonic_additions = random.sample(sonically_expanded_pool_filtered, k=num_sonic_to_add)
-                final_candidate_pool.extend(sonic_additions); logger.info(f"Added {len(sonic_additions)} sonically similar tracks to the pool.")
-        elif not refined_mood_genre_tracks and sonically_expanded_pool_filtered:
-            logger.info("Only sonically expanded tracks available (mood/genre pool was empty after filtering).")
-            final_candidate_pool = sonically_expanded_pool_filtered
+            for track in sonically_expanded_pool_filtered:
+                 if track.ratingKey not in added_keys:
+                    remaining_discovery_pool.append(track)
+                    added_keys.add(track.ratingKey)
         
-        if not final_candidate_pool: logger.warning("No tracks remaining after all filtering and sonic expansion (if enabled)."); return []
+        random.shuffle(remaining_discovery_pool)
         
-        # Ensure unique tracks before final limit and sort
+        num_needed_from_discovery = actual_limit - len(final_candidate_pool)
+        if num_needed_from_discovery > 0 and remaining_discovery_pool:
+            final_candidate_pool.extend(remaining_discovery_pool[:num_needed_from_discovery])
+        
+        logger.info(f"Combined pool size before sort/final limit: {len(final_candidate_pool)}")
+        if not final_candidate_pool: logger.warning("No tracks remaining after all filtering and expansion."); return []
+        
+        # Deduplicate one last time (primarily if history + discovery had overlaps not caught by key sets)
         final_tracks_dict = {track.ratingKey: track for track in final_candidate_pool}
         unique_final_tracks = list(final_tracks_dict.values())
-        
-        # Limit the pool *before* expensive sorting if it's too large
-        if len(unique_final_tracks) > limit * 1.5: # Sort a slightly larger pool then limit
-             logger.debug(f"Pre-sort pool size {len(unique_final_tracks)}, sampling down before sort to ~{int(limit*1.2)}")
-             unique_final_tracks = random.sample(unique_final_tracks, k=int(limit*1.2))
 
+        # Limit the pool for sorting if it's still much larger than needed
+        if len(unique_final_tracks) > actual_limit * 1.5: 
+             logger.debug(f"Pre-sort pool size {len(unique_final_tracks)}, sampling down before sort to ~{int(actual_limit*1.2)}")
+             unique_final_tracks = random.sample(unique_final_tracks, k=int(actual_limit*1.2))
+
+        # Apply Sonic Sort if enabled
         if config.TIME_PLAYLIST_SONIC_SORT and len(unique_final_tracks) > 1:
-            selected_tracks_before_sort = unique_final_tracks
-            # Use the new config vars for sorting parameters
             selected_tracks = self._sort_by_sonic_similarity_greedy(
                 unique_final_tracks,
                 score_limit=config.TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT,
                 score_max_distance=config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE
             )
-            # The sort function returns the full sorted list, limiting happens after.
         else:
-            # If not sorting, just shuffle the unique tracks
-            random.shuffle(unique_final_tracks)
+            random.shuffle(unique_final_tracks) # Shuffle if not sonically sorting
             selected_tracks = unique_final_tracks
         
-        # Final limit
-        k = min(limit, len(selected_tracks))
-        final_selected_tracks = selected_tracks[:k]
+        # Final limit to the desired playlist size
+        final_k = min(actual_limit, len(selected_tracks))
+        final_selected_tracks = selected_tracks[:final_k]
         
         logger.info(f"Selected {len(final_selected_tracks)} tracks for the final time window playlist ({'sonically sorted' if config.TIME_PLAYLIST_SONIC_SORT and len(final_selected_tracks) > 1 else 'randomly selected/shuffled'}).")
         return final_selected_tracks
