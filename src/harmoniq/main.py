@@ -1,5 +1,7 @@
 # src/harmoniq/main.py
 import logging
+from datetime import datetime
+import pytz # For timezone handling
 # Import config variables
 from . import config
 # Import logger configured in log_config
@@ -8,29 +10,68 @@ from .log_config import logger
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
 
+# --- Helper Function for Time Playlist ---
+def get_active_time_window():
+    """
+    Determines the current active time window based on TIME_WINDOWS_CONFIG.
+    Returns the configuration dict for the active window, or None.
+    """
+    if not config.TIME_WINDOWS_CONFIG:
+        logger.debug("No time windows configured or parsed.")
+        return None
+    try:
+        timezone = pytz.timezone(config.TIMEZONE)
+        now_local = datetime.now(timezone)
+        current_hour = now_local.hour
+        logger.debug(f"Current local time: {now_local.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, Current Hour: {current_hour}")
+    except pytz.exceptions.UnknownTimeZoneError:
+        logger.error(f"Unknown timezone: '{config.TIMEZONE}'. Defaulting to UTC for time window check.")
+        now_local = datetime.now(pytz.utc); current_hour = now_local.hour
+    except Exception as e:
+        logger.error(f"Error getting current time with timezone: {e}. Defaulting to UTC.")
+        now_local = datetime.now(pytz.utc); current_hour = now_local.hour
+
+    for window in config.TIME_WINDOWS_CONFIG:
+        start_hour = window['start_hour']
+        end_hour = window['end_hour']
+        if start_hour >= end_hour: # Overnight or single full day (00-00)
+            if end_hour == 0 and start_hour > 0: # Window ends at midnight (e.g. 17:00-00:00)
+                if current_hour >= start_hour: # Covers 17:00 through 23:59
+                    logger.info(f"Active time window (overnight to midnight): {start_hour:02d}:00 - 00:00. Criteria: {window['criteria']}")
+                    return window
+            elif start_hour == 0 and end_hour == 0: # All day window (00:00-00:00)
+                 logger.info(f"Active time window (all day): 00:00 - 00:00. Criteria: {window['criteria']}")
+                 return window
+            elif current_hour >= start_hour or current_hour < end_hour: # Standard overnight (e.g. 22:00-05:00)
+                logger.info(f"Active time window (overnight): {start_hour:02d}:00 - {end_hour:02d}:00. Criteria: {window['criteria']}")
+                return window
+        else: # Standard window (within the same day)
+            if start_hour <= current_hour < end_hour:
+                logger.info(f"Active time window: {start_hour:02d}:00 - {end_hour:02d}:00. Criteria: {window['criteria']}")
+                return window
+    logger.info(f"No active time window found for current hour: {current_hour}"); return None
+
 def run_playlist_update_cycle():
     """
     Main logic loop that connects to services, fetches data,
     matches tracks, and updates Plex playlists.
     """
     logger.info("Starting playlist update cycle...")
+    # Removed the debug logs from here, as config.py is parsing correctly.
 
     plex_client = None
     lastfm_client = None
-    lb_client = None
 
     # --- Connect to Services ---
     try:
-        plex_client = PlexClient() # Essential
+        plex_client = PlexClient()
         # Initialize optional clients only if enabled AND configured
         if config.ENABLE_LASTFM_RECS or config.ENABLE_LASTFM_CHARTS:
             if config.LASTFM_API_KEY and config.LASTFM_USER:
                  lastfm_client = LastfmClient()
             else:
                  logger.warning("Last.fm client cannot be initialized. API Key or User is missing.")
-                 if config.ENABLE_LASTFM_RECS: logger.warning("Disabling Last.fm Recommendations.")
-                 if config.ENABLE_LASTFM_CHARTS: logger.warning("Disabling Last.fm Charts.")
-
+                 # No need to log disabling here, the check on `lastfm_client` instance later handles it
     except ValueError as e:
          logger.error(f"Configuration value error during client initialization: {e}. Aborting cycle.")
          return
@@ -39,15 +80,13 @@ def run_playlist_update_cycle():
         return
 
     # --- Get Plex Libraries ---
-    valid_music_libraries = [] # Store the actual LibrarySection objects
+    valid_music_libraries = []
     if plex_client:
         logger.info(f"Attempting to access Plex libraries: {config.PLEX_MUSIC_LIBRARY_NAMES}")
         for library_name in config.PLEX_MUSIC_LIBRARY_NAMES:
-             library = plex_client.get_music_library(library_name) # Use the updated client method
+             library = plex_client.get_music_library(library_name)
              if library:
                  valid_music_libraries.append(library)
-             # Warnings/errors logged within get_music_library if not found/valid
-
         if not valid_music_libraries:
              logger.error("Could not access any valid Plex music libraries defined in PLEX_MUSIC_LIBRARY_NAMES. Aborting update cycle.")
              return
@@ -56,93 +95,111 @@ def run_playlist_update_cycle():
          logger.error("Plex client not initialized. Aborting.")
          return
 
-
-    # --- Target Library for Playlist Creation ---
-    # Use the first valid music library found as the default context for creating new playlists.
     target_library = valid_music_libraries[0]
     logger.info(f"Using '{target_library.title}' as the target library for creating new playlists.")
 
-    # --- Process Enabled Playlist Types ---
-    # 1. Last.fm Recommendations
-    if config.ENABLE_LASTFM_RECS and lastfm_client and valid_music_libraries: # Check for lastfm_client instance
-        logger.info("Processing Last.fm Recommendations (Derived)...")
-        recommendations_fm = lastfm_client.get_recommendations(limit=config.PLAYLIST_SIZE_LASTFM_RECS)
-        if recommendations_fm:
-            logger.info(f"Fetched {len(recommendations_fm)} derived recommendations. Matching in Plex...")
+    # --- Generic function to process playlist data (for Last.fm) ---
+    def process_sourced_playlist(playlist_type, fetch_func, enable_flag, playlist_name_config, size_config, client_instance):
+        """Helper function to fetch from external source, match, and update a playlist."""
+        if not enable_flag:
+            logger.debug(f"{playlist_type} feature not enabled. Skipping.")
+            return
+        if not client_instance:
+            logger.warning(f"Skipping {playlist_type}: Client not available (likely due to missing config).")
+            return
+        if not valid_music_libraries: # Should have been caught earlier, but defensive check
+            logger.warning(f"Skipping {playlist_type}: No valid Plex libraries.")
+            return
 
-            matched_tracks_fm = []
-            not_found_count_fm = 0
-            for i, rec in enumerate(recommendations_fm):
-                logger.debug(f"Matching FM-Rec {i+1}/{len(recommendations_fm)}: '{rec['artist']} - {rec['title']}'")
-                # Pass the LIST of libraries
-                plex_track = plex_client.find_track(valid_music_libraries, rec['artist'], rec['title'])
+        logger.info(f"Processing {playlist_type}...")
+        source_tracks = fetch_func(limit=size_config)
+        if source_tracks:
+            logger.info(f"Fetched {len(source_tracks)} tracks for {playlist_type}. Matching in Plex...")
+            matched_tracks = []
+            not_found_count = 0
+            for i, track_data in enumerate(source_tracks):
+                logger.debug(f"Matching {playlist_type} {i+1}/{len(source_tracks)}: '{track_data['artist']} - {track_data['title']}'")
+                plex_track = plex_client.find_track(valid_music_libraries, track_data['artist'], track_data['title'])
                 if plex_track:
-                    matched_tracks_fm.append(plex_track)
+                    matched_tracks.append(plex_track)
                 else:
-                    not_found_count_fm += 1
+                    not_found_count += 1 # Logging of individual not founds happens in find_track
+            logger.info(f"{playlist_type} Matching complete. Found {len(matched_tracks)} tracks across configured libraries. {not_found_count} tracks not found.")
 
-            logger.info(f"Last.fm Rec Matching complete. Found {len(matched_tracks_fm)} tracks across configured libraries. {not_found_count_fm} recommended tracks not found.")
-
-            if matched_tracks_fm:
-                # Pass the TARGET library
+            if matched_tracks:
                 success = plex_client.update_playlist(
-                    playlist_name=config.PLAYLIST_NAME_LASTFM_RECS,
-                    tracks_to_add=matched_tracks_fm,
-                    music_library=target_library
+                    playlist_name=playlist_name_config,
+                    tracks_to_add=matched_tracks,
+                    music_library=target_library # Use first library for creation context
+                )
+                if success: logger.info(f"Successfully updated '{playlist_name_config}' playlist in Plex.")
+                else: logger.error(f"Failed to update '{playlist_name_config}' playlist in Plex.")
+            else:
+                logger.info(f"No matching tracks found in Plex for {playlist_type}. Playlist '{playlist_name_config}' not created/updated.")
+        else:
+            logger.info(f"No tracks received from source for {playlist_type}.")
+
+    # --- Process Last.fm Playlists ---
+    process_sourced_playlist(
+        playlist_type="Last.fm Recommendations (Derived)",
+        fetch_func=lastfm_client.get_recommendations if lastfm_client else lambda limit: [],
+        enable_flag=config.ENABLE_LASTFM_RECS,
+        playlist_name_config=config.PLAYLIST_NAME_LASTFM_RECS,
+        size_config=config.PLAYLIST_SIZE_LASTFM_RECS,
+        client_instance=lastfm_client
+    )
+
+    process_sourced_playlist(
+        playlist_type="Last.fm Charts",
+        fetch_func=lastfm_client.get_chart_top_tracks if lastfm_client else lambda limit: [],
+        enable_flag=config.ENABLE_LASTFM_CHARTS,
+        playlist_name_config=config.PLAYLIST_NAME_LASTFM_CHARTS,
+        size_config=config.PLAYLIST_SIZE_LASTFM_CHARTS,
+        client_instance=lastfm_client
+    )
+
+    # --- Time-Based "Daily Flow" Playlist ---
+    if config.ENABLE_TIME_PLAYLIST and plex_client and valid_music_libraries: # Ensure plex_client is available
+        logger.info("Processing Time-Based 'Daily Flow' Playlist...")
+        active_window = get_active_time_window()
+
+        if active_window:
+            logger.info(f"Active time window criteria: Moods={active_window['criteria']['moods']}, Styles={active_window['criteria']['styles']}")
+            
+            moods_to_match = active_window['criteria']['moods']
+            styles_to_match = active_window['criteria']['styles'] # These are treated as genres
+            logger.info(f"Active time window criteria: Moods={moods_to_match}, Styles/Genres={styles_to_match}")
+            
+            # Call the new method in plex_client
+            time_based_tracks = plex_client.find_tracks_by_criteria(
+                libraries=valid_music_libraries, # Pass all valid libraries to search in
+                moods=moods_to_match,
+                styles=styles_to_match, # Will be treated as genres by find_tracks_by_criteria
+                limit=config.PLAYLIST_SIZE_TIME
+            )
+
+            if time_based_tracks: # This block will only run if the placeholder is replaced with actual tracks
+                logger.info(f"Found {len(time_based_tracks)} tracks for the current time window.")
+                success = plex_client.update_playlist(
+                    playlist_name=config.PLAYLIST_NAME_TIME,
+                    tracks_to_add=time_based_tracks,
+                    music_library=target_library # Use first library for creation context
                 )
                 if success:
-                     logger.info(f"Successfully updated '{config.PLAYLIST_NAME_LASTFM_RECS}' playlist in Plex.")
+                     logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' playlist.")
                 else:
-                     logger.error(f"Failed to update '{config.PLAYLIST_NAME_LASTFM_RECS}' playlist in Plex.")
+                     logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' playlist.")
             else:
-                 logger.info("No matching tracks found in Plex for Last.fm recommendations. Playlist not created/updated.")
+                # If placeholder is active, or no tracks found by criteria
+                logger.info(f"No tracks found matching criteria (or placeholder active) for current time window. '{config.PLAYLIST_NAME_TIME}' not updated.")
         else:
-            logger.info("No derived recommendations generated from Last.fm.")
-    elif config.ENABLE_LASTFM_RECS:
-        logger.warning("Skipping Last.fm Recommendations: Client not available, no valid libraries, or feature disabled.")
+            # No active window found by get_active_time_window()
+            logger.info("No active time window. 'Daily Flow' playlist will not be updated.")
 
+    elif config.ENABLE_TIME_PLAYLIST:
+        # This case handles if plex_client or valid_music_libraries was None
+        logger.warning("Skipping Time-Based Playlist: Plex client/libraries not available or feature disabled.")
 
-    # 2. Last.fm Charts (Optional)
-    if config.ENABLE_LASTFM_CHARTS and lastfm_client and valid_music_libraries: # Check for lastfm_client instance
-        logger.info("Processing Last.fm Charts...")
-        chart_tracks_data = lastfm_client.get_chart_top_tracks(limit=config.PLAYLIST_SIZE_LASTFM_CHARTS)
-        if chart_tracks_data:
-            logger.info(f"Fetched {len(chart_tracks_data)} chart tracks. Matching in Plex...")
-
-            matched_chart_tracks = []
-            not_found_chart_count = 0
-            for i, track_data in enumerate(chart_tracks_data):
-                 logger.debug(f"Matching chart {i+1}/{len(chart_tracks_data)}: '{track_data['artist']} - {track_data['title']}'")
-                 # Pass the LIST of libraries
-                 plex_track = plex_client.find_track(valid_music_libraries, track_data['artist'], track_data['title'])
-                 if plex_track:
-                     matched_chart_tracks.append(plex_track)
-                 else:
-                     not_found_chart_count += 1
-
-            logger.info(f"Matching complete for charts. Found {len(matched_chart_tracks)} tracks across configured libraries. {not_found_chart_count} chart tracks not found.")
-
-            if matched_chart_tracks:
-                # Pass the TARGET library
-                success = plex_client.update_playlist(
-                    playlist_name=config.PLAYLIST_NAME_LASTFM_CHARTS,
-                    tracks_to_add=matched_chart_tracks,
-                    music_library=target_library
-                )
-                if success:
-                     logger.info(f"Successfully updated '{config.PLAYLIST_NAME_LASTFM_CHARTS}' playlist in Plex.")
-                else:
-                     logger.error(f"Failed to update '{config.PLAYLIST_NAME_LASTFM_CHARTS}' playlist in Plex.")
-            else:
-                 logger.info("No matching tracks found in Plex for Last.fm chart tracks. Playlist not created/updated.")
-        else:
-             logger.info("No chart tracks received from Last.fm.")
-    elif config.ENABLE_LASTFM_CHARTS:
-         logger.warning("Skipping Last.fm Charts: Client not available, no valid libraries, or feature disabled.")
-
-
-    # --- Add placeholders for other playlist types later ---
-    # if config.ENABLE_TIME_PLAYLIST and valid_music_libraries: ...
 
     logger.info("Playlist update cycle finished.")
 
@@ -150,11 +207,8 @@ def run_playlist_update_cycle():
 if __name__ == "__main__":
     logger.info("Harmoniq service starting (Phase 1 - Single Run)...")
     try:
-        # Config loading happens on import, errors there will exit the script
         run_playlist_update_cycle()
     except Exception as e:
-        # Catch errors happening during the cycle itself that weren't caught internally
         logger.exception(f"An unexpected error occurred during the main update cycle: {e}")
     finally:
-        # This ensures the finished message is logged even if errors occur
         logger.info("Harmoniq service finished.")
