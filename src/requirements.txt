@@ -2,4 +2,4 @@ python-dotenv # For local .env loading
 requests
 PlexAPI
 pytz
-# Add schedule or APScheduler later in Phase 2
+schedule
