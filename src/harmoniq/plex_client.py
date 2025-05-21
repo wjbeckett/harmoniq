@@ -116,12 +116,12 @@ class PlexClient:
     def find_tracks_by_criteria(self,
                                 libraries: list[LibrarySection],
                                 moods: list[str] = None,
-                                styles: list[str] = None, # Treated as genres
+                                styles: list[str] = None,
                                 limit: int = 50):
         """
         Finds tracks across specified libraries matching ANY of the given moods
-        AND ANY of the given styles (genres), applying configured refinements.
-        Unrated tracks are included if min_rating is set.
+        AND ANY of the given styles (genres), applying configured refinements
+        and potentially expanding with sonically similar tracks.
         """
         if not libraries:
             logger.error("Cannot find tracks by criteria: No libraries provided.")
@@ -131,93 +131,118 @@ class PlexClient:
         genres_to_match_plex = styles if styles else []
 
         logger.info(f"Searching for tracks with Moods: {moods_to_match_plex or 'Any'} AND Genres: {genres_to_match_plex or 'Any'}")
-        logger.info(f"Refinement settings: MinRatingStars={config.TIME_PLAYLIST_MIN_RATING}, ExcludePlayedDays={config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS}, MaxSkipCount={config.TIME_PLAYLIST_MAX_SKIP_COUNT}")
-
-        initial_candidate_tracks = []
-        all_fetched_rating_keys = set()
+        
+        initial_candidate_tracks_mood_genre = []
+        all_fetched_rating_keys = set() # Used to avoid adding duplicates from mood/genre search initially
 
         for library in libraries:
-            logger.debug(f"Searching for criteria-based tracks in library: '{library.title}'")
+            logger.debug(f"Searching for mood/genre tracks in library: '{library.title}'")
             plex_filters = {}
             if moods_to_match_plex: plex_filters['track.mood'] = moods_to_match_plex
             if genres_to_match_plex: plex_filters['track.genre'] = genres_to_match_plex
 
             if not plex_filters:
-                logger.info(f"No mood or genre criteria specified for library '{library.title}'. Skipping library.")
+                logger.info(f"No mood or genre criteria for '{library.title}'. Skipping library for mood/genre search.")
                 continue
-
             try:
-                logger.debug(f"Plex search in '{library.title}' with filters: {plex_filters}")
-                MAX_FETCH_PER_LIB_CRITERIA = limit * 10
-                tracks_from_plex = library.search(libtype='track', limit=MAX_FETCH_PER_LIB_CRITERIA, filters=plex_filters)
+                logger.debug(f"Plex mood/genre search in '{library.title}' with filters: {plex_filters}")
+                # Fetch a larger pool initially based on mood/genre
+                MAX_FETCH_MOOD_GENRE = limit * 5 # Fetch more to filter down
+                tracks_from_plex = library.search(libtype='track', limit=MAX_FETCH_MOOD_GENRE, filters=plex_filters)
                 logger.debug(f"Found {len(tracks_from_plex)} tracks initially matching mood/genre in '{library.title}'.")
                 for track in tracks_from_plex:
                     if track.ratingKey not in all_fetched_rating_keys:
-                        initial_candidate_tracks.append(track)
+                        initial_candidate_tracks_mood_genre.append(track)
                         all_fetched_rating_keys.add(track.ratingKey)
-            except BadRequest as e: logger.error(f"BadRequest searching by criteria in '{library.title}': {e}.")
-            except Exception as e: logger.exception(f"Unexpected error searching by criteria in '{library.title}': {e}")
+            except BadRequest as e: logger.error(f"BadRequest searching by mood/genre in '{library.title}': {e}.")
+            except Exception as e: logger.exception(f"Unexpected error searching by mood/genre in '{library.title}': {e}")
         
-        logger.info(f"Found {len(initial_candidate_tracks)} total unique candidate tracks matching mood/genre criteria.")
+        logger.info(f"Found {len(initial_candidate_tracks_mood_genre)} total unique candidate tracks from mood/genre search.")
 
-        if not initial_candidate_tracks:
+        # Apply common filters (rating, recency, skips) to the mood/genre pool
+        refined_mood_genre_tracks = self._apply_common_filters(initial_candidate_tracks_mood_genre)
+        logger.info(f"{len(refined_mood_genre_tracks)} tracks remaining after applying common filters to mood/genre pool.")
+
+        # --- Sonic Expansion Logic ---
+        sonically_expanded_pool = []
+        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and refined_mood_genre_tracks:
+            logger.info("Sonic expansion enabled. Selecting seed tracks...")
+            
+            # Select seed tracks (randomly from the refined mood/genre pool)
+            num_seeds = min(config.TIME_PLAYLIST_SONIC_SEED_TRACKS, len(refined_mood_genre_tracks))
+            if num_seeds > 0:
+                seed_tracks = random.sample(refined_mood_genre_tracks, k=num_seeds)
+                logger.info(f"Selected {len(seed_tracks)} seed tracks for sonic expansion.")
+
+                all_sonic_candidates_keys = set(t.ratingKey for t in refined_mood_genre_tracks) # Keep track of keys already in pool or added by sonic
+
+                for i, seed_track in enumerate(seed_tracks):
+                    logger.debug(f"Fetching sonically similar tracks for seed {i+1}/{num_seeds}: '{seed_track.title}' by '{seed_track.artist().title}'")
+                    try:
+                        # Add a small delay to be nice to the Plex server
+                        time.sleep(0.1) # 100ms delay before each sonic search
+                        similar = seed_track.sonicallySimilar(
+                            limit=config.TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED,
+                            maxDistance=config.TIME_PLAYLIST_SONIC_MAX_DISTANCE
+                        )
+                        logger.debug(f"Found {len(similar)} sonically similar tracks for '{seed_track.title}'.")
+                        for s_track in similar:
+                            if s_track.ratingKey not in all_sonic_candidates_keys:
+                                sonically_expanded_pool.append(s_track)
+                                all_sonic_candidates_keys.add(s_track.ratingKey) # Add to prevent re-adding
+                    except SonicallySimilarError as e: # Catch specific error if sonic data not available
+                         logger.warning(f"Could not get sonically similar tracks for '{seed_track.title}': {e}")
+                    except Exception as e:
+                         logger.exception(f"Error fetching sonically similar for '{seed_track.title}': {e}")
+                
+                logger.info(f"Collected {len(sonically_expanded_pool)} initial sonically similar tracks (before filtering).")
+                # Apply common filters to these newly found sonically similar tracks
+                sonically_expanded_pool = self._apply_common_filters(sonically_expanded_pool)
+                logger.info(f"{len(sonically_expanded_pool)} sonically similar tracks remaining after common filters.")
+            else:
+                logger.info("Not enough refined mood/genre tracks to select seeds for sonic expansion.")
+
+        # --- Combine and Select Final Tracks ---
+        final_candidate_pool = refined_mood_genre_tracks # Start with the mood/genre tracks
+        
+        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and sonically_expanded_pool:
+            num_mood_genre_target = int(limit * (1.0 - config.TIME_PLAYLIST_FINAL_MIX_RATIO))
+            num_sonic_target = limit - num_mood_genre_target
+            
+            logger.info(f"Targeting ~{num_mood_genre_target} mood/genre tracks and ~{num_sonic_target} sonic tracks for final mix.")
+
+            # Take a sample from each pool, respecting targets and availability
+            final_mood_genre_sample = random.sample(refined_mood_genre_tracks, k=min(num_mood_genre_target, len(refined_mood_genre_tracks)))
+            
+            # Ensure sonic tracks are not already in the mood/genre sample
+            sonic_pool_for_sampling = [t for t in sonically_expanded_pool if t.ratingKey not in {mg_t.ratingKey for mg_t in final_mood_genre_sample}]
+            final_sonic_sample = random.sample(sonic_pool_for_sampling, k=min(num_sonic_target, len(sonic_pool_for_sampling)))
+            
+            final_candidate_pool = final_mood_genre_sample + final_sonic_sample
+            # Shuffle the combined pool for good measure before final limit
+            random.shuffle(final_candidate_pool)
+            logger.info(f"Combined pool: {len(final_mood_genre_sample)} mood/genre + {len(final_sonic_sample)} sonic = {len(final_candidate_pool)} tracks.")
+        
+        elif not refined_mood_genre_tracks and sonically_expanded_pool: # Only sonic tracks available
+            logger.info("Only sonically expanded tracks available (mood/genre pool was empty after filtering).")
+            final_candidate_pool = sonically_expanded_pool
+        # Else, final_candidate_pool is just refined_mood_genre_tracks
+
+        if not final_candidate_pool:
+            logger.warning("No tracks remaining after all filtering and sonic expansion (if enabled).")
             return []
 
-        # --- Apply Refinements ---
-        refined_tracks = []
-        min_rating_stars = config.TIME_PLAYLIST_MIN_RATING # User-friendly 0-5 star rating
+        # Final deduplication and limit
+        final_tracks_dict = {track.ratingKey: track for track in final_candidate_pool}
+        unique_final_tracks = list(final_tracks_dict.values())
         
-        exclude_cutoff_date = None
-        if config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS > 0:
-            try:
-                current_timezone = pytz.timezone(config.TIMEZONE)
-                now_aware = datetime.now(current_timezone)
-            except pytz.exceptions.UnknownTimeZoneError:
-                logger.warning(f"Unknown timezone '{config.TIMEZONE}' for recency filter, using UTC.")
-                now_aware = datetime.now(pytz.utc)
-            exclude_cutoff_date = now_aware - timedelta(days=config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS)
-            logger.debug(f"Recency filter: Excluding tracks played since {exclude_cutoff_date.strftime('%Y-%m-%d')}")
-
-        max_skips = config.TIME_PLAYLIST_MAX_SKIP_COUNT
-
-        for track in initial_candidate_tracks:
-            # Rating check (Revised)
-            user_rating_plex = track.userRating if hasattr(track, 'userRating') else None # Plex rating is 0-10
-            
-            if min_rating_stars > 0: # Only apply rating filter if a minimum is set
-                if user_rating_plex is None: # Unrated tracks are KEPT if min_rating > 0
-                    pass # Keep unrated tracks for discovery
-                else:
-                    # Convert Plex 0-10 rating to 0-5 stars for comparison
-                    user_rating_stars = user_rating_plex / 2.0
-                    if user_rating_stars < min_rating_stars:
-                        logger.debug(f"Excluding (Rating): '{track.title}' (Rated: {user_rating_stars:.1f} < Min: {min_rating_stars} stars)")
-                        continue
-            
-            # Recency check
-            if exclude_cutoff_date and track.lastViewedAt:
-                track_last_played_aware = track.lastViewedAt.replace(tzinfo=pytz.utc).astimezone(exclude_cutoff_date.tzinfo)
-                if track_last_played_aware >= exclude_cutoff_date:
-                    logger.debug(f"Excluding (Recency): '{track.title}' (Last played: {track_last_played_aware.strftime('%Y-%m-%d')})")
-                    continue
-            
-            # Skip count check
-            skip_count = track.skipCount if hasattr(track, 'skipCount') and track.skipCount is not None else 0
-            if skip_count > max_skips:
-                logger.debug(f"Excluding (Skips): '{track.title}' (Skips: {skip_count} > {max_skips})")
-                continue
-            
-            refined_tracks.append(track)
-
-        logger.info(f"{len(refined_tracks)} tracks remaining after applying rating, recency, and skip filters.")
-
-        if not refined_tracks:
-            return []
-
-        k = min(limit, len(refined_tracks))
-        selected_tracks = random.sample(refined_tracks, k=k)
+        # Shuffle one last time before limiting
+        random.shuffle(unique_final_tracks) 
         
-        logger.info(f"Selected {len(selected_tracks)} tracks for time window playlist after all refinements.")
+        k = min(limit, len(unique_final_tracks))
+        selected_tracks = unique_final_tracks[:k] # Simpler than random.sample if already shuffled
+        
+        logger.info(f"Selected {len(selected_tracks)} tracks for the final time window playlist.")
         return selected_tracks
     
     def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection):
