@@ -1,11 +1,13 @@
 # src/harmoniq/plex_client.py
 import logging
 import time
-import random # For sampling tracks
+import random
+from datetime import datetime, timedelta
+import pytz
 from plexapi.server import PlexServer
 from plexapi.exceptions import NotFound, Unauthorized, BadRequest
 from plexapi.playlist import Playlist
-from plexapi.library import LibrarySection # Import LibrarySection type hint
+from plexapi.library import LibrarySection
 
 # Import config variables
 from . import config
@@ -111,6 +113,113 @@ class PlexClient:
                  logger.exception(f"Unexpected error searching Plex in library '{library.title}' for {search_term_log}: {e}")
         logger.info(f"Track {search_term_log} not found in any library after all searches."); return None
 
+    def find_tracks_by_criteria(self,
+                                libraries: list[LibrarySection],
+                                moods: list[str] = None,
+                                styles: list[str] = None, # Treated as genres
+                                limit: int = 50):
+        """
+        Finds tracks across specified libraries matching ANY of the given moods
+        AND ANY of the given styles (genres), applying configured refinements.
+        Unrated tracks are included if min_rating is set.
+        """
+        if not libraries:
+            logger.error("Cannot find tracks by criteria: No libraries provided.")
+            return []
+
+        moods_to_match_plex = moods if moods else []
+        genres_to_match_plex = styles if styles else []
+
+        logger.info(f"Searching for tracks with Moods: {moods_to_match_plex or 'Any'} AND Genres: {genres_to_match_plex or 'Any'}")
+        logger.info(f"Refinement settings: MinRatingStars={config.TIME_PLAYLIST_MIN_RATING}, ExcludePlayedDays={config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS}, MaxSkipCount={config.TIME_PLAYLIST_MAX_SKIP_COUNT}")
+
+        initial_candidate_tracks = []
+        all_fetched_rating_keys = set()
+
+        for library in libraries:
+            logger.debug(f"Searching for criteria-based tracks in library: '{library.title}'")
+            plex_filters = {}
+            if moods_to_match_plex: plex_filters['track.mood'] = moods_to_match_plex
+            if genres_to_match_plex: plex_filters['track.genre'] = genres_to_match_plex
+
+            if not plex_filters:
+                logger.info(f"No mood or genre criteria specified for library '{library.title}'. Skipping library.")
+                continue
+
+            try:
+                logger.debug(f"Plex search in '{library.title}' with filters: {plex_filters}")
+                MAX_FETCH_PER_LIB_CRITERIA = limit * 10
+                tracks_from_plex = library.search(libtype='track', limit=MAX_FETCH_PER_LIB_CRITERIA, filters=plex_filters)
+                logger.debug(f"Found {len(tracks_from_plex)} tracks initially matching mood/genre in '{library.title}'.")
+                for track in tracks_from_plex:
+                    if track.ratingKey not in all_fetched_rating_keys:
+                        initial_candidate_tracks.append(track)
+                        all_fetched_rating_keys.add(track.ratingKey)
+            except BadRequest as e: logger.error(f"BadRequest searching by criteria in '{library.title}': {e}.")
+            except Exception as e: logger.exception(f"Unexpected error searching by criteria in '{library.title}': {e}")
+        
+        logger.info(f"Found {len(initial_candidate_tracks)} total unique candidate tracks matching mood/genre criteria.")
+
+        if not initial_candidate_tracks:
+            return []
+
+        # --- Apply Refinements ---
+        refined_tracks = []
+        min_rating_stars = config.TIME_PLAYLIST_MIN_RATING # User-friendly 0-5 star rating
+        
+        exclude_cutoff_date = None
+        if config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS > 0:
+            try:
+                current_timezone = pytz.timezone(config.TIMEZONE)
+                now_aware = datetime.now(current_timezone)
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(f"Unknown timezone '{config.TIMEZONE}' for recency filter, using UTC.")
+                now_aware = datetime.now(pytz.utc)
+            exclude_cutoff_date = now_aware - timedelta(days=config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS)
+            logger.debug(f"Recency filter: Excluding tracks played since {exclude_cutoff_date.strftime('%Y-%m-%d')}")
+
+        max_skips = config.TIME_PLAYLIST_MAX_SKIP_COUNT
+
+        for track in initial_candidate_tracks:
+            # Rating check (Revised)
+            user_rating_plex = track.userRating if hasattr(track, 'userRating') else None # Plex rating is 0-10
+            
+            if min_rating_stars > 0: # Only apply rating filter if a minimum is set
+                if user_rating_plex is None: # Unrated tracks are KEPT if min_rating > 0
+                    pass # Keep unrated tracks for discovery
+                else:
+                    # Convert Plex 0-10 rating to 0-5 stars for comparison
+                    user_rating_stars = user_rating_plex / 2.0
+                    if user_rating_stars < min_rating_stars:
+                        logger.debug(f"Excluding (Rating): '{track.title}' (Rated: {user_rating_stars:.1f} < Min: {min_rating_stars} stars)")
+                        continue
+            
+            # Recency check
+            if exclude_cutoff_date and track.lastViewedAt:
+                track_last_played_aware = track.lastViewedAt.replace(tzinfo=pytz.utc).astimezone(exclude_cutoff_date.tzinfo)
+                if track_last_played_aware >= exclude_cutoff_date:
+                    logger.debug(f"Excluding (Recency): '{track.title}' (Last played: {track_last_played_aware.strftime('%Y-%m-%d')})")
+                    continue
+            
+            # Skip count check
+            skip_count = track.skipCount if hasattr(track, 'skipCount') and track.skipCount is not None else 0
+            if skip_count > max_skips:
+                logger.debug(f"Excluding (Skips): '{track.title}' (Skips: {skip_count} > {max_skips})")
+                continue
+            
+            refined_tracks.append(track)
+
+        logger.info(f"{len(refined_tracks)} tracks remaining after applying rating, recency, and skip filters.")
+
+        if not refined_tracks:
+            return []
+
+        k = min(limit, len(refined_tracks))
+        selected_tracks = random.sample(refined_tracks, k=k)
+        
+        logger.info(f"Selected {len(selected_tracks)} tracks for time window playlist after all refinements.")
+        return selected_tracks
+    
     def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection):
         """
         Creates a new Plex playlist or updates an existing one by clearing and adding the provided tracks.
@@ -149,100 +258,3 @@ class PlexClient:
         except BadRequest as e: logger.error(f"BadRequest error updating playlist '{playlist_name}': {e}."); return False
         except Exception as e: logger.exception(f"An unexpected error occurred updating playlist '{playlist_name}': {e}"); return False
         logger.error(f"Reached end of update_playlist for '{playlist_name}' without clear success/failure."); return False
-
-    # --- NEW METHOD FOR TIME-BASED PLAYLISTS ---
-    def find_tracks_by_criteria(self,
-                                libraries: list[LibrarySection],
-                                moods: list[str] = None,
-                                styles: list[str] = None, # We'll treat styles as genres
-                                limit: int = 50,
-                                exclude_played_days: int | None = None): # Placeholder for future use
-        """
-        Finds tracks across specified libraries matching ANY of the given moods
-        AND ANY of the given styles (treated as genres).
-
-        Args:
-            libraries: List of Plex LibrarySection objects to search.
-            moods: List of mood strings to match (case-insensitive).
-            styles: List of style/genre strings to match (case-insensitive).
-            limit: Maximum number of tracks to return.
-            exclude_played_days: (Optional) Exclude tracks played in the last X days (Not yet implemented).
-        """
-        if not libraries:
-            logger.error("Cannot find tracks by criteria: No libraries provided.")
-            return []
-
-        # Prepare lists, ensuring they are lowercase for case-insensitive matching if Plex filters are exact
-        # However, for direct filter values with Plex, original casing might be needed or __iexact used.
-        # Let's assume Plex Sonic Analysis tags (Moods, Styles/Genres) are stored with specific casing.
-        # The filter should handle case-insensitivity via __icontains or __iexact if supported.
-        # For now, we'll pass them as capitalized from config and see how Plex handles it.
-        
-        # Convert to lowercase for logging and potential Python-side filtering if needed
-        log_moods = [m.lower() for m in moods if m] if moods else []
-        log_genres = [s.lower() for s in styles if s] if styles else [] # Treat styles as genres
-
-        logger.info(f"Searching for tracks with Moods: {moods if moods else 'Any'} AND Genres: {styles if styles else 'Any'}")
-
-        candidate_tracks = []
-        all_fetched_rating_keys = set() # To avoid processing exact same track twice if found via different criteria paths
-
-        for library in libraries:
-            logger.debug(f"Searching for criteria-based tracks in library: '{library.title}'")
-            
-            plex_filters = {}
-            # IMPORTANT: Plex filter syntax for multiple values for one key (e.g. track.mood) is OR.
-            # If multiple keys are provided (e.g. track.mood and track.genre), it's an AND between them.
-            # track.mood = ['Happy', 'Energetic'] -> mood is Happy OR Energetic
-            # track.genre = ['Rock', 'Pop'] -> genre is Rock OR Pop
-            # Both filters applied: (mood is Happy OR Energetic) AND (genre is Rock OR Pop)
-
-            if moods:
-                # Filter key `track.mood` expects the mood tag exactly as Plex stores it.
-                plex_filters['track.mood'] = moods # Pass the list of mood strings
-            if styles: # Treat styles as genres
-                plex_filters['track.genre'] = styles # Pass the list of style/genre strings
-
-            if not plex_filters:
-                logger.info(f"No mood or style/genre criteria specified for library '{library.title}'. Skipping library for this criteria search.")
-                continue
-
-            try:
-                logger.debug(f"Attempting Plex search in '{library.title}' with filters: {plex_filters}")
-                # Fetch a larger pool to sample from, Plex applies its own internal limit first.
-                # We want to give Plex as much info as possible to do the heavy lifting.
-                MAX_FETCH_PER_LIB_CRITERIA = limit * 5 # Arbitrary multiplier
-                
-                # library.search() is preferred over library.all() when filters are known
-                tracks_from_plex = library.search(libtype='track', limit=MAX_FETCH_PER_LIB_CRITERIA, filters=plex_filters)
-                
-                logger.debug(f"Found {len(tracks_from_plex)} tracks initially matching criteria in '{library.title}'.")
-                for track in tracks_from_plex:
-                    if track.ratingKey not in all_fetched_rating_keys:
-                        candidate_tracks.append(track)
-                        all_fetched_rating_keys.add(track.ratingKey)
-
-            except BadRequest as e:
-                 logger.error(f"BadRequest searching by criteria in '{library.title}': {e}. Filter keys for mood/genre might be incorrect or not supported as expected.")
-            except Exception as e:
-                 logger.exception(f"Unexpected error searching by criteria in '{library.title}': {e}")
-        
-        logger.info(f"Found {len(candidate_tracks)} total unique candidate tracks matching criteria across all libraries.")
-
-        if not candidate_tracks:
-            return []
-
-        # --- Further Python-based filtering (e.g., exclude_played_days) ---
-        # Placeholder for now
-        # if exclude_played_days is not None:
-        #     # (Logic to filter by lastViewedAt) ...
-        #     logger.info(f"{len(candidate_tracks)} tracks remaining after play history filter.")
-
-        # Shuffle and limit
-        # Use random.sample to get a unique list of k items.
-        # Ensure k is not greater than the population size.
-        k = min(limit, len(candidate_tracks))
-        selected_tracks = random.sample(candidate_tracks, k=k)
-        
-        logger.info(f"Selected {len(selected_tracks)} tracks for time window playlist.")
-        return selected_tracks

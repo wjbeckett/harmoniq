@@ -139,6 +139,10 @@ try:
          logger.warning("ENABLE_TIME_PLAYLIST is true, but TIME_WINDOWS environment variable is empty or missing. Time playlist will not be generated.")
          # ENABLE_TIME_PLAYLIST = False # Optionally disable
 
+    TIME_PLAYLIST_MIN_RATING = get_env_var("TIME_PLAYLIST_MIN_RATING", default=0, var_type=int)
+    TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS = get_env_var("TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS", default=0, var_type=int)
+    TIME_PLAYLIST_MAX_SKIP_COUNT = get_env_var("TIME_PLAYLIST_MAX_SKIP_COUNT", default=999, var_type=int)
+    
     # Logging Level
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
 
