@@ -4,10 +4,12 @@ import time
 import random
 from datetime import datetime, timedelta
 import pytz
+
 from plexapi.server import PlexServer
-from plexapi.exceptions import NotFound, Unauthorized, BadRequest
+from plexapi.exceptions import NotFound, Unauthorized, BadRequest, PlexApiException
 from plexapi.playlist import Playlist
 from plexapi.library import LibrarySection
+from plexapi.audio import Track as PlexApiTrack
 
 # Import config variables
 from . import config
@@ -113,59 +115,14 @@ class PlexClient:
                  logger.exception(f"Unexpected error searching Plex in library '{library.title}' for {search_term_log}: {e}")
         logger.info(f"Track {search_term_log} not found in any library after all searches."); return None
 
-    def find_tracks_by_criteria(self,
-                                libraries: list[LibrarySection],
-                                moods: list[str] = None,
-                                styles: list[str] = None, # Treated as genres
-                                limit: int = 50):
-        """
-        Finds tracks across specified libraries matching ANY of the given moods
-        AND ANY of the given styles (genres), applying configured refinements.
-        Unrated tracks are included if min_rating is set.
-        """
-        if not libraries:
-            logger.error("Cannot find tracks by criteria: No libraries provided.")
+    def _apply_common_filters(self, tracks: list[PlexApiTrack]) -> list[PlexApiTrack]:
+        """Helper function to apply rating, recency, and skip filters."""
+        if not tracks:
             return []
-
-        moods_to_match_plex = moods if moods else []
-        genres_to_match_plex = styles if styles else []
-
-        logger.info(f"Searching for tracks with Moods: {moods_to_match_plex or 'Any'} AND Genres: {genres_to_match_plex or 'Any'}")
-        logger.info(f"Refinement settings: MinRatingStars={config.TIME_PLAYLIST_MIN_RATING}, ExcludePlayedDays={config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS}, MaxSkipCount={config.TIME_PLAYLIST_MAX_SKIP_COUNT}")
-
-        initial_candidate_tracks = []
-        all_fetched_rating_keys = set()
-
-        for library in libraries:
-            logger.debug(f"Searching for criteria-based tracks in library: '{library.title}'")
-            plex_filters = {}
-            if moods_to_match_plex: plex_filters['track.mood'] = moods_to_match_plex
-            if genres_to_match_plex: plex_filters['track.genre'] = genres_to_match_plex
-
-            if not plex_filters:
-                logger.info(f"No mood or genre criteria specified for library '{library.title}'. Skipping library.")
-                continue
-
-            try:
-                logger.debug(f"Plex search in '{library.title}' with filters: {plex_filters}")
-                MAX_FETCH_PER_LIB_CRITERIA = limit * 10
-                tracks_from_plex = library.search(libtype='track', limit=MAX_FETCH_PER_LIB_CRITERIA, filters=plex_filters)
-                logger.debug(f"Found {len(tracks_from_plex)} tracks initially matching mood/genre in '{library.title}'.")
-                for track in tracks_from_plex:
-                    if track.ratingKey not in all_fetched_rating_keys:
-                        initial_candidate_tracks.append(track)
-                        all_fetched_rating_keys.add(track.ratingKey)
-            except BadRequest as e: logger.error(f"BadRequest searching by criteria in '{library.title}': {e}.")
-            except Exception as e: logger.exception(f"Unexpected error searching by criteria in '{library.title}': {e}")
-        
-        logger.info(f"Found {len(initial_candidate_tracks)} total unique candidate tracks matching mood/genre criteria.")
-
-        if not initial_candidate_tracks:
-            return []
-
-        # --- Apply Refinements ---
-        refined_tracks = []
-        min_rating_stars = config.TIME_PLAYLIST_MIN_RATING # User-friendly 0-5 star rating
+            
+        logger.debug(f"Applying common filters to {len(tracks)} tracks...")
+        filtered_tracks = []
+        min_rating_stars = config.TIME_PLAYLIST_MIN_RATING
         
         exclude_cutoff_date = None
         if config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS > 0:
@@ -176,19 +133,16 @@ class PlexClient:
                 logger.warning(f"Unknown timezone '{config.TIMEZONE}' for recency filter, using UTC.")
                 now_aware = datetime.now(pytz.utc)
             exclude_cutoff_date = now_aware - timedelta(days=config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS)
-            logger.debug(f"Recency filter: Excluding tracks played since {exclude_cutoff_date.strftime('%Y-%m-%d')}")
+            logger.debug(f"Recency filter: Excluding tracks played since {exclude_cutoff_date.strftime('%Y-%m-%d') if exclude_cutoff_date else 'N/A'}")
 
         max_skips = config.TIME_PLAYLIST_MAX_SKIP_COUNT
 
-        for track in initial_candidate_tracks:
-            # Rating check (Revised)
-            user_rating_plex = track.userRating if hasattr(track, 'userRating') else None # Plex rating is 0-10
-            
-            if min_rating_stars > 0: # Only apply rating filter if a minimum is set
-                if user_rating_plex is None: # Unrated tracks are KEPT if min_rating > 0
-                    pass # Keep unrated tracks for discovery
+        for track in tracks:
+            # Rating check
+            if min_rating_stars > 0:
+                user_rating_plex = track.userRating if hasattr(track, 'userRating') else None
+                if user_rating_plex is None: pass # Keep unrated
                 else:
-                    # Convert Plex 0-10 rating to 0-5 stars for comparison
                     user_rating_stars = user_rating_plex / 2.0
                     if user_rating_stars < min_rating_stars:
                         logger.debug(f"Excluding (Rating): '{track.title}' (Rated: {user_rating_stars:.1f} < Min: {min_rating_stars} stars)")
@@ -196,10 +150,16 @@ class PlexClient:
             
             # Recency check
             if exclude_cutoff_date and track.lastViewedAt:
-                track_last_played_aware = track.lastViewedAt.replace(tzinfo=pytz.utc).astimezone(exclude_cutoff_date.tzinfo)
-                if track_last_played_aware >= exclude_cutoff_date:
-                    logger.debug(f"Excluding (Recency): '{track.title}' (Last played: {track_last_played_aware.strftime('%Y-%m-%d')})")
-                    continue
+                # Ensure track.lastViewedAt is timezone-aware
+                # Plex stores datetimes as naive UTC, so localize to UTC then convert.
+                try:
+                    track_last_played_aware = track.lastViewedAt.replace(tzinfo=pytz.utc).astimezone(exclude_cutoff_date.tzinfo)
+                    if track_last_played_aware >= exclude_cutoff_date:
+                        logger.debug(f"Excluding (Recency): '{track.title}' (Last played: {track_last_played_aware.strftime('%Y-%m-%d')})")
+                        continue
+                except Exception as tz_err:
+                    logger.warning(f"Could not perform timezone conversion for recency check on track '{track.title}': {tz_err}")
+
             
             # Skip count check
             skip_count = track.skipCount if hasattr(track, 'skipCount') and track.skipCount is not None else 0
@@ -207,17 +167,138 @@ class PlexClient:
                 logger.debug(f"Excluding (Skips): '{track.title}' (Skips: {skip_count} > {max_skips})")
                 continue
             
-            refined_tracks.append(track)
+            filtered_tracks.append(track)
+        logger.debug(f"{len(filtered_tracks)} tracks remaining after common filters.")
+        return filtered_tracks
 
-        logger.info(f"{len(refined_tracks)} tracks remaining after applying rating, recency, and skip filters.")
-
-        if not refined_tracks:
+    def find_tracks_by_criteria(self,
+                                libraries: list[LibrarySection],
+                                moods: list[str] = None,
+                                styles: list[str] = None, # Treated as genres
+                                limit: int = 50):
+        """
+        Finds tracks across specified libraries matching ANY of the given moods
+        AND ANY of the given styles (genres), applying configured refinements
+        and potentially expanding with sonically similar tracks.
+        """
+        if not libraries:
+            logger.error("Cannot find tracks by criteria: No libraries provided.")
             return []
 
-        k = min(limit, len(refined_tracks))
-        selected_tracks = random.sample(refined_tracks, k=k)
+        moods_to_match_plex = moods if moods else []
+        genres_to_match_plex = styles if styles else []
+
+        logger.info(f"Searching for tracks with Moods: {moods_to_match_plex or 'Any'} AND Genres: {genres_to_match_plex or 'Any'}")
+        logger.info(f"Refinement settings: MinRatingStars={config.TIME_PLAYLIST_MIN_RATING}, ExcludePlayedDays={config.TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS}, MaxSkipCount={config.TIME_PLAYLIST_MAX_SKIP_COUNT}")
+        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION:
+            logger.info(f"Sonic Expansion: Enabled (Seeds={config.TIME_PLAYLIST_SONIC_SEED_TRACKS}, PerSeed={config.TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED}, MaxDist={config.TIME_PLAYLIST_SONIC_MAX_DISTANCE}, MixRatio={config.TIME_PLAYLIST_FINAL_MIX_RATIO})")
         
-        logger.info(f"Selected {len(selected_tracks)} tracks for time window playlist after all refinements.")
+        initial_candidate_tracks_mood_genre = []
+        all_fetched_rating_keys = set()
+
+        for library in libraries:
+            logger.debug(f"Searching for mood/genre tracks in library: '{library.title}'")
+            plex_filters = {}
+            if moods_to_match_plex: plex_filters['track.mood'] = moods_to_match_plex
+            if genres_to_match_plex: plex_filters['track.genre'] = genres_to_match_plex
+
+            if not plex_filters:
+                logger.info(f"No mood or genre criteria for '{library.title}'. Skipping library for mood/genre search.")
+                continue
+            try:
+                logger.debug(f"Plex mood/genre search in '{library.title}' with filters: {plex_filters}")
+                MAX_FETCH_MOOD_GENRE = limit * 10 # Increased pool
+                tracks_from_plex = library.search(libtype='track', limit=MAX_FETCH_MOOD_GENRE, filters=plex_filters)
+                logger.debug(f"Found {len(tracks_from_plex)} tracks initially matching mood/genre in '{library.title}'.")
+                for track in tracks_from_plex:
+                    if track.ratingKey not in all_fetched_rating_keys:
+                        initial_candidate_tracks_mood_genre.append(track)
+                        all_fetched_rating_keys.add(track.ratingKey)
+            except BadRequest as e: logger.error(f"BadRequest searching by mood/genre in '{library.title}': {e}.")
+            except Exception as e: logger.exception(f"Unexpected error searching by mood/genre in '{library.title}': {e}")
+        
+        logger.info(f"Found {len(initial_candidate_tracks_mood_genre)} total unique candidate tracks from mood/genre search.")
+
+        refined_mood_genre_tracks = self._apply_common_filters(initial_candidate_tracks_mood_genre)
+        logger.info(f"{len(refined_mood_genre_tracks)} tracks remaining after applying common filters to mood/genre pool.")
+
+        sonically_expanded_pool_filtered = []
+        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and refined_mood_genre_tracks:
+            logger.info("Sonic expansion enabled. Selecting seed tracks...")
+            
+            num_seeds = min(config.TIME_PLAYLIST_SONIC_SEED_TRACKS, len(refined_mood_genre_tracks))
+            if num_seeds > 0:
+                seed_tracks = random.sample(refined_mood_genre_tracks, k=num_seeds)
+                logger.info(f"Selected {len(seed_tracks)} seed tracks for sonic expansion.")
+
+                current_playlist_candidate_keys = set(t.ratingKey for t in refined_mood_genre_tracks)
+
+                temp_sonic_candidates = []
+                for i, seed_track in enumerate(seed_tracks):
+                    logger.debug(f"Fetching sonically similar for seed {i+1}/{num_seeds}: '{seed_track.title}' by '{seed_track.artist().title if seed_track.artist() else 'N/A'}'")
+                    try:
+                        time.sleep(0.1)
+                        similar = seed_track.sonicallySimilar(
+                            limit=config.TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED,
+                            maxDistance=config.TIME_PLAYLIST_SONIC_MAX_DISTANCE
+                        )
+                        logger.debug(f"Found {len(similar)} raw sonically similar tracks for '{seed_track.title}'.")
+                        for s_track in similar:
+                            if s_track.ratingKey not in current_playlist_candidate_keys:
+                                temp_sonic_candidates.append(s_track)
+                                current_playlist_candidate_keys.add(s_track.ratingKey)
+                    except PlexApiException as e: logger.warning(f"Could not get sonically similar for '{seed_track.title}': {e}")
+                    except Exception as e: logger.exception(f"Error fetching sonically similar for '{seed_track.title}': {e}")
+                
+                logger.info(f"Collected {len(temp_sonic_candidates)} initial unique sonically similar tracks (before filtering).")
+                sonically_expanded_pool_filtered = self._apply_common_filters(temp_sonic_candidates)
+                logger.info(f"{len(sonically_expanded_pool_filtered)} sonically similar tracks remaining after common filters.")
+            else:
+                logger.info("Not enough refined mood/genre tracks to select seeds for sonic expansion.")
+
+        final_candidate_pool = list(refined_mood_genre_tracks)
+        
+        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and sonically_expanded_pool_filtered:
+            num_mood_genre_current = len(final_candidate_pool)
+            num_sonic_to_add = 0
+
+            # If aiming for a ratio, calculate based on the *original limit*
+            if 0.0 < config.TIME_PLAYLIST_FINAL_MIX_RATIO < 1.0:
+                target_sonic_count = int(limit * config.TIME_PLAYLIST_FINAL_MIX_RATIO)
+                target_mood_genre_count = limit - target_sonic_count
+
+                # Adjust current mood/genre pool if it exceeds its target ratio portion
+                if len(final_candidate_pool) > target_mood_genre_count:
+                    final_candidate_pool = random.sample(final_candidate_pool, k=target_mood_genre_count)
+                    num_mood_genre_current = len(final_candidate_pool)
+
+                num_sonic_to_add = min(len(sonically_expanded_pool_filtered), limit - num_mood_genre_current, target_sonic_count)
+            else: # If ratio is 0 or 1, or not using ratio logic strictly
+                num_sonic_to_add = min(len(sonically_expanded_pool_filtered), limit - num_mood_genre_current)
+
+            if num_sonic_to_add > 0:
+                # Add a sample of the filtered sonic tracks
+                # Ensure these are not already in final_candidate_pool (though current_playlist_candidate_keys should handle most)
+                sonic_additions = random.sample(sonically_expanded_pool_filtered, k=num_sonic_to_add)
+                final_candidate_pool.extend(sonic_additions)
+                logger.info(f"Added {len(sonic_additions)} sonically similar tracks to the pool.")
+        
+        if not final_candidate_pool:
+            logger.warning("No tracks remaining after all filtering and sonic expansion (if enabled).")
+            return []
+
+        # Final shuffle of the combined pool before limiting
+        random.shuffle(final_candidate_pool)
+        
+        # Ensure final list is unique by ratingKey one last time, just in case
+        final_tracks_dict = {track.ratingKey: track for track in final_candidate_pool}
+        unique_final_tracks = list(final_tracks_dict.values())
+        
+        k = min(limit, len(unique_final_tracks))
+        # Take the first k tracks after shuffling
+        selected_tracks = unique_final_tracks[:k] 
+        
+        logger.info(f"Selected {len(selected_tracks)} tracks for the final time window playlist.")
         return selected_tracks
     
     def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection):
