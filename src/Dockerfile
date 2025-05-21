@@ -23,5 +23,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ./harmoniq /app/harmoniq
 
 # Set the command to run the application
-# In Phase 1, this runs main.py directly. In Phase 2, it will run the scheduler script.
-CMD ["python", "-m", "harmoniq.main"]
+CMD ["python", "-m", "harmoniq.scheduler_main"]
