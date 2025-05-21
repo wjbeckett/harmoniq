@@ -148,6 +148,11 @@ try:
     TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED = get_env_var("TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED", default=5, var_type=int)
     TIME_PLAYLIST_SONIC_MAX_DISTANCE = get_env_var("TIME_PLAYLIST_SONIC_MAX_DISTANCE", default=0.4, var_type=float)
     TIME_PLAYLIST_FINAL_MIX_RATIO = get_env_var("TIME_PLAYLIST_FINAL_MIX_RATIO", default=0.5, var_type=float)
+
+    TIME_PLAYLIST_SONIC_SORT = get_env_var("TIME_PLAYLIST_SONIC_SORT", default=True, var_type=bool)
+    TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT = get_env_var("TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT", default=20, var_type=int)
+    TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE = get_env_var("TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE", default=0.6, var_type=float)
+
     
     # Logging Level
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()

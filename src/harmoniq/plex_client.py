@@ -170,11 +170,74 @@ class PlexClient:
             filtered_tracks.append(track)
         logger.debug(f"{len(filtered_tracks)} tracks remaining after common filters.")
         return filtered_tracks
+    
+    def _similarity_score(self, current_track: PlexApiTrack, candidate_track: PlexApiTrack,
+                          limit: int, max_distance: float) -> int:
+        """Calculates a similarity score (lower is better, like an index)."""
+        try:
+            # Add a small delay to be extremely cautious with Plex server load
+            time.sleep(0.05) # 50ms delay
+            similars = current_track.sonicallySimilar(limit=limit, maxDistance=max_distance)
+            for index, similar_track in enumerate(similars):
+                if similar_track.ratingKey == candidate_track.ratingKey:
+                    return index # Lower index means more similar
+            return limit + 1 # Not found within the limited similar list, assign a high score
+        except PlexApiException as e:
+            logger.warning(f"Could not get sonic similarity for '{current_track.title}' (vs '{candidate_track.title}'): {e}. Assigning max score.")
+            return limit + 2 # Even higher score if API error
+        except Exception as e:
+            logger.error(f"Unexpected error calculating similarity for '{current_track.title}': {e}. Assigning max score.")
+            return limit + 3
+
+    def _sort_by_sonic_similarity_greedy(self, tracks_to_sort: list[PlexApiTrack],
+                                         score_limit: int, score_max_distance: float) -> list[PlexApiTrack]:
+        """Sorts a list of tracks using a greedy sonic similarity algorithm."""
+        if len(tracks_to_sort) < 2:
+            return tracks_to_sort
+
+        logger.info(f"Performing greedy sonic sort on {len(tracks_to_sort)} tracks...")
+        remaining_tracks = list(tracks_to_sort) # Make a mutable copy
+        sorted_playlist = []
+
+        # Start with a random track
+        current_track = random.choice(remaining_tracks)
+        sorted_playlist.append(current_track)
+        remaining_tracks.remove(current_track)
+        logger.debug(f"Sonic sort starting with: '{current_track.title}'")
+
+        while remaining_tracks:
+            # Find the track in remaining_tracks most similar to current_track
+            best_candidate = None
+            lowest_score = float('inf')
+
+            if len(remaining_tracks) % 10 == 0 or len(remaining_tracks) == 1 : # Log progress occasionally
+                 logger.debug(f"Sonic sort: {len(remaining_tracks)} tracks remaining to sort.")
+
+            for candidate_track in remaining_tracks:
+                score = self._similarity_score(current_track, candidate_track, score_limit, score_max_distance)
+                if score < lowest_score:
+                    lowest_score = score
+                    best_candidate = candidate_track
+            
+            if best_candidate:
+                logger.debug(f"Next track in sonic sort: '{best_candidate.title}' (Score: {lowest_score} from '{current_track.title}')")
+                sorted_playlist.append(best_candidate)
+                remaining_tracks.remove(best_candidate)
+                current_track = best_candidate # Move to the newly added track
+            else:
+                # Should not happen if remaining_tracks is not empty, but as a fallback:
+                logger.warning("Sonic sort: Could not find a best candidate. Appending remaining tracks randomly.")
+                random.shuffle(remaining_tracks)
+                sorted_playlist.extend(remaining_tracks)
+                break
+        
+        logger.info(f"Greedy sonic sort complete. Sorted {len(sorted_playlist)} tracks.")
+        return sorted_playlist
 
     def find_tracks_by_criteria(self,
                                 libraries: list[LibrarySection],
                                 moods: list[str] = None,
-                                styles: list[str] = None, # Treated as genres
+                                styles: list[str] = None,
                                 limit: int = 50):
         """
         Finds tracks across specified libraries matching ANY of the given moods
@@ -257,49 +320,53 @@ class PlexClient:
                 logger.info("Not enough refined mood/genre tracks to select seeds for sonic expansion.")
 
         final_candidate_pool = list(refined_mood_genre_tracks)
-        
         if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and sonically_expanded_pool_filtered:
-            num_mood_genre_current = len(final_candidate_pool)
-            num_sonic_to_add = 0
-
-            # If aiming for a ratio, calculate based on the *original limit*
+            num_mood_genre_current = len(final_candidate_pool); num_sonic_to_add = 0
             if 0.0 < config.TIME_PLAYLIST_FINAL_MIX_RATIO < 1.0:
                 target_sonic_count = int(limit * config.TIME_PLAYLIST_FINAL_MIX_RATIO)
                 target_mood_genre_count = limit - target_sonic_count
-
-                # Adjust current mood/genre pool if it exceeds its target ratio portion
-                if len(final_candidate_pool) > target_mood_genre_count:
-                    final_candidate_pool = random.sample(final_candidate_pool, k=target_mood_genre_count)
-                    num_mood_genre_current = len(final_candidate_pool)
-
+                if len(final_candidate_pool) > target_mood_genre_count: final_candidate_pool = random.sample(final_candidate_pool, k=target_mood_genre_count)
+                num_mood_genre_current = len(final_candidate_pool)
                 num_sonic_to_add = min(len(sonically_expanded_pool_filtered), limit - num_mood_genre_current, target_sonic_count)
-            else: # If ratio is 0 or 1, or not using ratio logic strictly
-                num_sonic_to_add = min(len(sonically_expanded_pool_filtered), limit - num_mood_genre_current)
-
+            else: num_sonic_to_add = min(len(sonically_expanded_pool_filtered), limit - num_mood_genre_current)
             if num_sonic_to_add > 0:
-                # Add a sample of the filtered sonic tracks
-                # Ensure these are not already in final_candidate_pool (though current_playlist_candidate_keys should handle most)
                 sonic_additions = random.sample(sonically_expanded_pool_filtered, k=num_sonic_to_add)
-                final_candidate_pool.extend(sonic_additions)
-                logger.info(f"Added {len(sonic_additions)} sonically similar tracks to the pool.")
+                final_candidate_pool.extend(sonic_additions); logger.info(f"Added {len(sonic_additions)} sonically similar tracks to the pool.")
+        elif not refined_mood_genre_tracks and sonically_expanded_pool_filtered:
+            logger.info("Only sonically expanded tracks available (mood/genre pool was empty after filtering).")
+            final_candidate_pool = sonically_expanded_pool_filtered
         
-        if not final_candidate_pool:
-            logger.warning("No tracks remaining after all filtering and sonic expansion (if enabled).")
-            return []
-
-        # Final shuffle of the combined pool before limiting
-        random.shuffle(final_candidate_pool)
+        if not final_candidate_pool: logger.warning("No tracks remaining after all filtering and sonic expansion (if enabled)."); return []
         
-        # Ensure final list is unique by ratingKey one last time, just in case
+        # Ensure unique tracks before final limit and sort
         final_tracks_dict = {track.ratingKey: track for track in final_candidate_pool}
         unique_final_tracks = list(final_tracks_dict.values())
         
-        k = min(limit, len(unique_final_tracks))
-        # Take the first k tracks after shuffling
-        selected_tracks = unique_final_tracks[:k] 
+        # Limit the pool *before* expensive sorting if it's too large
+        if len(unique_final_tracks) > limit * 1.5: # Sort a slightly larger pool then limit
+             logger.debug(f"Pre-sort pool size {len(unique_final_tracks)}, sampling down before sort to ~{int(limit*1.2)}")
+             unique_final_tracks = random.sample(unique_final_tracks, k=int(limit*1.2))
+
+        if config.TIME_PLAYLIST_SONIC_SORT and len(unique_final_tracks) > 1:
+            selected_tracks_before_sort = unique_final_tracks
+            # Use the new config vars for sorting parameters
+            selected_tracks = self._sort_by_sonic_similarity_greedy(
+                unique_final_tracks,
+                score_limit=config.TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT,
+                score_max_distance=config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE
+            )
+            # The sort function returns the full sorted list, limiting happens after.
+        else:
+            # If not sorting, just shuffle the unique tracks
+            random.shuffle(unique_final_tracks)
+            selected_tracks = unique_final_tracks
         
-        logger.info(f"Selected {len(selected_tracks)} tracks for the final time window playlist.")
-        return selected_tracks
+        # Final limit
+        k = min(limit, len(selected_tracks))
+        final_selected_tracks = selected_tracks[:k]
+        
+        logger.info(f"Selected {len(final_selected_tracks)} tracks for the final time window playlist ({'sonically sorted' if config.TIME_PLAYLIST_SONIC_SORT and len(final_selected_tracks) > 1 else 'randomly selected/shuffled'}).")
+        return final_selected_tracks
     
     def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection):
         """
