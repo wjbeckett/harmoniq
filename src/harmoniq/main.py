@@ -19,53 +19,37 @@ def get_active_time_window():
     if not config.TIME_WINDOWS_CONFIG:
         logger.debug("No time windows configured or parsed.")
         return None
-
     try:
-        # Get current time in the configured timezone
         timezone = pytz.timezone(config.TIMEZONE)
         now_local = datetime.now(timezone)
         current_hour = now_local.hour
         logger.debug(f"Current local time: {now_local.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, Current Hour: {current_hour}")
     except pytz.exceptions.UnknownTimeZoneError:
         logger.error(f"Unknown timezone: '{config.TIMEZONE}'. Defaulting to UTC for time window check.")
-        now_local = datetime.now(pytz.utc)
-        current_hour = now_local.hour
+        now_local = datetime.now(pytz.utc); current_hour = now_local.hour
     except Exception as e:
         logger.error(f"Error getting current time with timezone: {e}. Defaulting to UTC.")
-        now_local = datetime.now(pytz.utc)
-        current_hour = now_local.hour
-
+        now_local = datetime.now(pytz.utc); current_hour = now_local.hour
 
     for window in config.TIME_WINDOWS_CONFIG:
         start_hour = window['start_hour']
-        end_hour = window['end_hour'] # Exclusive for range checks usually
-
-        # Handle overnight windows (e.g., 22:00 - 02:00 where end_hour is < start_hour)
-        if start_hour >= end_hour: # Window wraps around midnight or is a single hour (e.g. 17:00-17:00, but we use < end_hour)
-                             # Corrected logic for overnight:
-            if current_hour >= start_hour or current_hour < end_hour: # e.g., current 23 >= start 22 OR current 01 < end 02
-                # Special case: If end_hour is 00, it means up to the end of hour 23.
-                # If start_hour is 17 and end_hour is 0, this means 17,18,19,20,21,22,23.
-                # The check `current_hour < end_hour` will only work if `end_hour` is e.g. 2 (for 2am).
-                # If `end_hour` is 0 (representing up to midnight), we need `current_hour >= start_hour`.
-                if end_hour == 0 and start_hour > 0: # Special handling for windows ending at midnight (00)
-                    if current_hour >= start_hour:
-                         logger.info(f"Active time window (overnight to midnight): {start_hour:02d}:00 - 00:00. Criteria: {window['criteria']}")
-                         return window
-                elif start_hour > end_hour: # Standard overnight (e.g., 22:00 - 05:00)
-                    if current_hour >= start_hour or current_hour < end_hour:
-                        logger.info(f"Active time window (overnight): {start_hour:02d}:00 - {end_hour:02d}:00. Criteria: {window['criteria']}")
-                        return window
-                # This should not be reached if start_hour == end_hour unless it's 00:00-00:00 (all day)
-                # For now, we assume distinct start/end.
-
-        else: # Standard window (within the same day, start_hour < end_hour)
+        end_hour = window['end_hour']
+        if start_hour >= end_hour: # Overnight or single full day (00-00)
+            if end_hour == 0 and start_hour > 0: # Window ends at midnight (e.g. 17:00-00:00)
+                if current_hour >= start_hour: # Covers 17:00 through 23:59
+                    logger.info(f"Active time window (overnight to midnight): {start_hour:02d}:00 - 00:00. Criteria: {window['criteria']}")
+                    return window
+            elif start_hour == 0 and end_hour == 0: # All day window (00:00-00:00)
+                 logger.info(f"Active time window (all day): 00:00 - 00:00. Criteria: {window['criteria']}")
+                 return window
+            elif current_hour >= start_hour or current_hour < end_hour: # Standard overnight (e.g. 22:00-05:00)
+                logger.info(f"Active time window (overnight): {start_hour:02d}:00 - {end_hour:02d}:00. Criteria: {window['criteria']}")
+                return window
+        else: # Standard window (within the same day)
             if start_hour <= current_hour < end_hour:
                 logger.info(f"Active time window: {start_hour:02d}:00 - {end_hour:02d}:00. Criteria: {window['criteria']}")
                 return window
-    
-    logger.info(f"No active time window found for current hour: {current_hour}")
-    return None
+    logger.info(f"No active time window found for current hour: {current_hour}"); return None
 
 def run_playlist_update_cycle():
     """
@@ -182,16 +166,17 @@ def run_playlist_update_cycle():
         if active_window:
             logger.info(f"Active time window criteria: Moods={active_window['criteria']['moods']}, Styles={active_window['criteria']['styles']}")
             
-            # --- TODO: Fetch tracks from Plex matching criteria ---
-            # This will be a new method in plex_client.py
-            # time_based_tracks = plex_client.find_tracks_by_criteria(
-            #     libraries=valid_music_libraries,
-            #     moods=active_window['criteria']['moods'],
-            #     styles=active_window['criteria']['styles'],
-            #     limit=config.PLAYLIST_SIZE_TIME 
-            # )
-            time_based_tracks = [] # Placeholder for now
-            logger.warning("Placeholder: Actual track fetching for time-based playlist not yet implemented.")
+            moods_to_match = active_window['criteria']['moods']
+            styles_to_match = active_window['criteria']['styles'] # These are treated as genres
+            logger.info(f"Active time window criteria: Moods={moods_to_match}, Styles/Genres={styles_to_match}")
+            
+            # Call the new method in plex_client
+            time_based_tracks = plex_client.find_tracks_by_criteria(
+                libraries=valid_music_libraries, # Pass all valid libraries to search in
+                moods=moods_to_match,
+                styles=styles_to_match, # Will be treated as genres by find_tracks_by_criteria
+                limit=config.PLAYLIST_SIZE_TIME
+            )
 
             if time_based_tracks: # This block will only run if the placeholder is replaced with actual tracks
                 logger.info(f"Found {len(time_based_tracks)} tracks for the current time window.")
