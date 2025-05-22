@@ -2,7 +2,7 @@
 import os
 import logging
 from dotenv import load_dotenv
-import re # Import regex
+import re
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -153,6 +153,12 @@ try:
     TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT = get_env_var("TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT", default=20, var_type=int)
     TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE = get_env_var("TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE", default=0.6, var_type=float)
 
+    TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS = get_env_var("TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS", default=True, var_type=bool)
+    TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS = get_env_var("TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS", default=90, var_type=int)
+    TIME_PLAYLIST_HISTORY_MIN_PLAYS = get_env_var("TIME_PLAYLIST_HISTORY_MIN_PLAYS", default=3, var_type=int) # Min play count to be considered
+    TIME_PLAYLIST_HISTORY_MIN_RATING = get_env_var("TIME_PLAYLIST_HISTORY_MIN_RATING", default=0, var_type=int) # 0-5 stars, 0 to ignore rating for history tracks
+    TIME_PLAYLIST_TARGET_HISTORY_COUNT = get_env_var("TIME_PLAYLIST_TARGET_HISTORY_COUNT", default=5, var_type=int) # How many history tracks to aim for
+
     
     # Logging Level
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
@@ -171,6 +177,15 @@ try:
         if TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED <= 0:
             logger.warning("TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED must be positive. Disabling sonic expansion.")
             TIME_PLAYLIST_USE_SONIC_EXPANSION = False
+
+    if TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS:
+        if TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS <= 0:
+            logger.warning("TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS must be positive. Disabling history track inclusion.")
+            TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS = False
+        if TIME_PLAYLIST_TARGET_HISTORY_COUNT <=0:
+            logger.warning("TIME_PLAYLIST_TARGET_HISTORY_COUNT must be positive. Setting to 1 if history inclusion is enabled.")
+            if TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS: TIME_PLAYLIST_TARGET_HISTORY_COUNT = 1 # Ensure at least 1 if enabled
+            else: TIME_PLAYLIST_TARGET_HISTORY_COUNT = 0
 
     logger.info("Configuration loaded successfully.")
 
