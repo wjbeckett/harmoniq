@@ -676,6 +676,235 @@ class PlexClient:
         logger.info(f"Selected {len(final_selected_tracks)} tracks for the final time window playlist ({'sonically sorted' if config.TIME_PLAYLIST_SONIC_SORT and len(final_selected_tracks) > 1 else 'randomly selected/shuffled'}).")
         return final_selected_tracks
     
+    def generate_harmoniq_flow_playlist(self,
+                                     libraries: list[LibrarySection],
+                                     active_period_name: str,
+                                     target_moods: list[str],
+                                     target_styles: list[str], # These are genres_or_styles
+                                     period_active_hours: set[int],
+                                     playlist_target_size: int
+                                     ) -> list[PlexApiTrack]:
+        logger.info(f"--- Generating Harmoniq Flow for Period: {active_period_name} ---")
+        logger.info(f"Target Vibe - Moods: {target_moods}, Styles/Genres: {target_styles}")
+        logger.info(f"Targeting {playlist_target_size} tracks.")
+        # Log other relevant settings
+        logger.info(f"History Integration: {config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS}, Target History Count: {config.TIME_PLAYLIST_TARGET_HISTORY_COUNT}")
+        logger.info(f"Sonic Adventure Bridging: {config.TIME_PLAYLIST_USE_SONIC_ADVENTURE}")
+        logger.info(f"Sonic Expansion Feature: {config.TIME_PLAYLIST_USE_SONIC_EXPANSION}")
+        logger.info(f"Sonic Sort Feature: {config.TIME_PLAYLIST_SONIC_SORT}")
+
+
+        # 1. Select Vibe Anchors (Discovery)
+        # Fetch a slightly larger pool than needed for vibe anchors to allow for fallout during filtering/selection
+        num_vibe_anchors_to_select = config.TIME_PLAYLIST_VIBE_ANCHOR_COUNT
+        vibe_anchors = self._select_vibe_anchors(
+            libraries, target_moods, target_styles, num_vibe_anchors_to_select 
+        )
+        logger.info(f"Selected {len(vibe_anchors)} Vibe Anchors: {[t.title for t in vibe_anchors]}")
+
+        # 2. Select Familiar Anchors (History)
+        familiar_anchors = []
+        num_familiar_anchors_to_select = config.TIME_PLAYLIST_TARGET_HISTORY_COUNT
+        if config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS:
+            familiar_anchors = self._select_familiar_anchors(
+                libraries, target_moods, target_styles, 
+                num_familiar_anchors_to_select, 
+                period_active_hours
+            )
+            logger.info(f"Selected {len(familiar_anchors)} Familiar Anchors: {[t.title for t in familiar_anchors]}")
+
+        # --- Build Skeleton Playlist by Interleaving Anchors ---
+        skeleton_playlist: list[PlexApiTrack] = []
+        # Use copies of the lists to pop from
+        temp_vibe_anchors = list(vibe_anchors)
+        temp_familiar_anchors = list(familiar_anchors)
+        
+        # Interleave, prioritizing familiar then vibe, or vice-versa, or alternating
+        # Let's try alternating, ensuring we use all selected anchors
+        # Ensure no direct duplicates in the skeleton by checking ratingKey
+        skeleton_keys = set()
+        while temp_vibe_anchors or temp_familiar_anchors:
+            if temp_familiar_anchors: # Prioritize adding a familiar anchor if available
+                anchor = temp_familiar_anchors.pop(0)
+                if anchor.ratingKey not in skeleton_keys:
+                    skeleton_playlist.append(anchor)
+                    skeleton_keys.add(anchor.ratingKey)
+            if temp_vibe_anchors:
+                anchor = temp_vibe_anchors.pop(0)
+                if anchor.ratingKey not in skeleton_keys:
+                    skeleton_playlist.append(anchor)
+                    skeleton_keys.add(anchor.ratingKey)
+        
+        if not skeleton_playlist and (vibe_anchors or familiar_anchors): # Fallback if interleaving somehow failed but had anchors
+            skeleton_playlist.extend(vibe_anchors)
+            for fa in familiar_anchors:
+                 if fa.ratingKey not in skeleton_keys: skeleton_playlist.append(fa); skeleton_keys.add(fa.ratingKey)
+
+
+        logger.info(f"Built skeleton playlist with {len(skeleton_playlist)} unique anchors: {[t.title for t in skeleton_playlist]}")
+
+        # --- Bridge Anchors with Sonic Adventure OR use Greedy Sort ---
+        final_playlist_tracks: list[PlexApiTrack] = []
+        processed_adventure_keys = set() # To avoid duplicates from adventures
+
+        if config.TIME_PLAYLIST_USE_SONIC_ADVENTURE and len(skeleton_playlist) >= 2:
+            logger.info("Bridging skeleton anchors with Sonic Adventure...")
+            for i in range(len(skeleton_playlist) - 1):
+                start_anchor = skeleton_playlist[i]
+                end_anchor = skeleton_playlist[i+1]
+
+                # Add start_anchor if not already added (handles first anchor and avoids dupes)
+                if start_anchor.ratingKey not in processed_adventure_keys:
+                    final_playlist_tracks.append(start_anchor)
+                    processed_adventure_keys.add(start_anchor.ratingKey)
+                
+                logger.debug(f"Attempting Sonic Adventure between '{start_anchor.title}' AND '{end_anchor.title}'")
+                adventure_path = []
+                try:
+                    # sonicAdventure is a library section method, use the library of the start_anchor
+                    start_anchor_library_name = start_anchor.librarySection().title # Assuming track has librarySection()
+                    start_anchor_lib_obj = self.get_music_library(start_anchor_library_name)
+                    if start_anchor_lib_obj:
+                        time.sleep(0.2) # Delay before each adventure call
+                        # The method expects Track objects or ratingKeys
+                        adventure_path = start_anchor_lib_obj.sonicAdventure(start=start_anchor, end=end_anchor)
+                        logger.debug(f"Sonic Adventure found {len(adventure_path)} tracks for path.")
+                    else:
+                        logger.warning(f"Could not get library object for start_anchor '{start_anchor.title}' to run sonicAdventure.")
+                except PlexApiException as e:
+                    logger.warning(f"Sonic Adventure failed between '{start_anchor.title}' and '{end_anchor.title}': {e}")
+                except Exception as e:
+                    logger.exception(f"Unexpected error during Sonic Adventure: {e}")
+
+                if adventure_path:
+                    # Filter adventure tracks (recency, skips, general min rating)
+                    filtered_adventure_tracks = self._apply_common_filters(adventure_path, is_historical_track_list=False)
+                    logger.debug(f"{len(filtered_adventure_tracks)} adventure tracks remain after filtering.")
+                    for adv_track in filtered_adventure_tracks:
+                        if adv_track.ratingKey not in processed_adventure_keys:
+                            final_playlist_tracks.append(adv_track)
+                            processed_adventure_keys.add(adv_track.ratingKey)
+            
+            # Add the very last anchor of the skeleton
+            if skeleton_playlist and skeleton_playlist[-1].ratingKey not in processed_adventure_keys:
+                final_playlist_tracks.append(skeleton_playlist[-1])
+                processed_adventure_keys.add(skeleton_playlist[-1].ratingKey)
+            
+            logger.info(f"Playlist size after Sonic Adventures: {len(final_playlist_tracks)}")
+
+        else: # Sonic Adventure disabled or not enough anchors, use combined anchors and optional sort/expansion
+            logger.info("Sonic Adventure not used. Using combined anchors directly.")
+            final_playlist_tracks = list(skeleton_playlist) # Start with the unique anchors
+            # If greedy sort is enabled and adventure wasn't used, apply it here
+            if config.TIME_PLAYLIST_SONIC_SORT and len(final_playlist_tracks) > 1:
+                logger.info("Applying Greedy Sonic Sort to anchor list as Sonic Adventure was not run.")
+                final_playlist_tracks = self._sort_by_sonic_similarity_greedy(
+                    final_playlist_tracks,
+                    score_limit=config.TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT,
+                    score_max_distance=config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE
+                )
+
+
+        # --- Optional Sonic Expansion (if playlist is short or to add more variety) ---
+        if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and len(final_playlist_tracks) < playlist_target_size:
+            logger.info("Attempting Sonic Expansion to fill remaining playlist space...")
+            num_needed_for_expansion = playlist_target_size - len(final_playlist_tracks)
+            # Choose seeds from the current final_playlist_tracks (which includes anchors and adventure paths)
+            # More seeds if we need many tracks, fewer if we need few.
+            num_expansion_seeds = min(config.TIME_PLAYLIST_SONIC_SEED_TRACKS, len(final_playlist_tracks))
+            
+            if num_expansion_seeds > 0 and num_needed_for_expansion > 0:
+                expansion_seed_tracks = random.sample(final_playlist_tracks, k=num_expansion_seeds)
+                logger.debug(f"Selected {len(expansion_seed_tracks)} seeds for post-adventure sonic expansion.")
+                
+                # Use existing keys to avoid re-adding what's already in final_playlist_tracks
+                # from the expansion process itself.
+                expansion_candidate_keys = set(t.ratingKey for t in final_playlist_tracks)
+                temp_expansion_candidates = []
+
+                for i, seed_track in enumerate(expansion_seed_tracks):
+                    logger.debug(f"Fetching expansion tracks for seed {i+1}/{num_seeds}: '{seed_track.title}'")
+                    try:
+                        time.sleep(0.1)
+                        similar = seed_track.sonicallySimilar(
+                            limit=max(5, (num_needed_for_expansion // num_expansion_seeds) + 2), # Fetch a bit more than strictly needed per seed
+                            maxDistance=config.TIME_PLAYLIST_SONIC_MAX_DISTANCE)
+                        for s_track in similar:
+                            if s_track.ratingKey not in expansion_candidate_keys:
+                                temp_expansion_candidates.append(s_track)
+                                expansion_candidate_keys.add(s_track.ratingKey)
+                    except PlexApiException as e: logger.warning(f"Sonic expansion error for '{seed_track.title}': {e}")
+                    except Exception as e: logger.exception(f"Unexpected error during sonic expansion for '{seed_track.title}': {e}")
+                
+                if temp_expansion_candidates:
+                    logger.info(f"Collected {len(temp_expansion_candidates)} unique tracks from sonic expansion (before filtering).")
+                    filtered_expansion_tracks = self._apply_common_filters(temp_expansion_candidates, is_historical_track_list=False)
+                    logger.info(f"{len(filtered_expansion_tracks)} expansion tracks remaining after filters.")
+                    random.shuffle(filtered_expansion_tracks)
+                    final_playlist_tracks.extend(filtered_expansion_tracks[:num_needed_for_expansion])
+                    logger.info(f"Playlist size after sonic expansion fill: {len(final_playlist_tracks)}")
+
+
+        # --- Padding with more mood/genre tracks if still short ---
+        if len(final_playlist_tracks) < playlist_target_size:
+            needed = playlist_target_size - len(final_playlist_tracks)
+            logger.info(f"Playlist still short by {needed}. Fetching more mood/genre discovery tracks for padding...")
+            
+            current_keys_in_playlist = set(t.ratingKey for t in final_playlist_tracks)
+            additional_discovery = []
+            fetch_limit_padding = needed * 5 # Fetch a good pool for padding
+
+            for lib in libraries: # Search all configured libraries
+                tracks = self._get_tracks_matching_mood_genre_style(lib, target_moods, target_styles, fetch_limit_padding)
+                for track in tracks:
+                    if track.ratingKey not in current_keys_in_playlist:
+                         additional_discovery.append(track)
+                         current_keys_in_playlist.add(track.ratingKey) # Add here to avoid re-adding from another lib
+            
+            if additional_discovery:
+                filtered_additional_discovery = self._apply_common_filters(additional_discovery, is_historical_track_list=False)
+                logger.info(f"Found {len(filtered_additional_discovery)} additional discovery tracks for padding (after filters).")
+                random.shuffle(filtered_additional_discovery)
+                final_playlist_tracks.extend(filtered_additional_discovery[:needed])
+            logger.info(f"Playlist size after padding: {len(final_playlist_tracks)}")
+
+
+        # --- Final Deduplication, Sort (if applicable and not done by adventure), and Limit ---
+        final_tracks_dict = {track.ratingKey: track for track in final_playlist_tracks} # Deduplicate
+        unique_final_tracks = list(final_tracks_dict.values())
+
+        # If Sonic Adventure was NOT used, and Sonic Sort IS enabled, apply greedy sort now.
+        # If Sonic Adventure WAS used, assume its path provides the primary flow.
+        if not config.TIME_PLAYLIST_USE_SONIC_ADVENTURE and \
+           config.TIME_PLAYLIST_SONIC_SORT and \
+           len(unique_final_tracks) > 1:
+            logger.info("Applying Greedy Sonic Sort as a final step (Sonic Adventure was not used).")
+            selected_tracks = self._sort_by_sonic_similarity_greedy(
+                unique_final_tracks,
+                score_limit=config.TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT,
+                score_max_distance=config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE
+            )
+        else:
+            # If adventure was used, or no sort, just shuffle the unique tracks before final limit
+            # to ensure some variety if padding happened or if adventure paths were short.
+            random.shuffle(unique_final_tracks)
+            selected_tracks = unique_final_tracks
+        
+        # Final limit
+        k = min(playlist_target_size, len(selected_tracks))
+        final_selected_tracks = selected_tracks[:k]
+        
+        sort_method_used = "unknown"
+        if config.TIME_PLAYLIST_USE_SONIC_ADVENTURE and len(skeleton_playlist) >=2 :
+            sort_method_used = "sonic adventure paths"
+        elif config.TIME_PLAYLIST_SONIC_SORT and len(final_selected_tracks) > 1:
+            sort_method_used = "greedy sonic sort"
+        else:
+            sort_method_used = "random shuffle"
+
+        logger.info(f"Selected {len(final_selected_tracks)} tracks for '{active_period_name}' Harmoniq Flow (flow by: {sort_method_used}).")
+        return final_selected_tracks
+    
     def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection):
         """
         Creates a new Plex playlist or updates an existing one by clearing and adding the provided tracks.
@@ -715,79 +944,3 @@ class PlexClient:
         except Exception as e: logger.exception(f"An unexpected error occurred updating playlist '{playlist_name}': {e}"); return False
         logger.error(f"Reached end of update_playlist for '{playlist_name}' without clear success/failure."); return False
     
-    def generate_harmoniq_flow_playlist(self,
-                                     libraries: list[LibrarySection],
-                                     active_period_name: str,
-                                     target_moods: list[str],
-                                     target_styles: list[str], # These are genres_or_styles
-                                     period_active_hours: set[int],
-                                     playlist_target_size: int
-                                     ) -> list[PlexApiTrack]:
-        logger.info(f"--- Generating Harmoniq Flow for Period: {active_period_name} ---")
-        logger.info(f"Target Vibe - Moods: {target_moods}, Styles/Genres: {target_styles}")
-        logger.info(f"Targeting {playlist_target_size} tracks.")
-
-        # 1. Select Vibe Anchors (Discovery)
-        vibe_anchors = self._select_vibe_anchors(
-            libraries, target_moods, target_styles, config.TIME_PLAYLIST_VIBE_ANCHOR_COUNT # This one is correct
-        )
-        logger.info(f"Selected {len(vibe_anchors)} Vibe Anchors: {[t.title for t in vibe_anchors]}")
-
-        # 2. Select Familiar Anchors (History)
-        familiar_anchors = []
-        if config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS:
-            familiar_anchors = self._select_familiar_anchors(
-                libraries, target_moods, target_styles, 
-                config.TIME_PLAYLIST_TARGET_HISTORY_COUNT, # <--- CORRECTED CONFIG VARIABLE HERE
-                period_active_hours
-            )
-            logger.info(f"Selected {len(familiar_anchors)} Familiar Anchors: {[t.title for t in familiar_anchors]}")
-
-        # --- TODO: Next steps (Skeleton, Sonic Adventure, etc.) ---
-        # For now, let's just combine, filter, sort (if enabled), and limit as a placeholder
-        
-        combined_anchors = list(vibe_anchors)
-        temp_added_keys = set(t.ratingKey for t in vibe_anchors)
-        for fa in familiar_anchors:
-            if fa.ratingKey not in temp_added_keys:
-                combined_anchors.append(fa)
-                temp_added_keys.add(fa.ratingKey)
-        
-        logger.info(f"Initial combined anchor pool size: {len(combined_anchors)}")
-
-        # Placeholder: If not enough anchors, fill with more mood/genre tracks
-        if len(combined_anchors) < playlist_target_size:
-            needed = playlist_target_size - len(combined_anchors)
-            logger.info(f"Anchor pool short by {needed}. Fetching more mood/genre discovery tracks...")
-            additional_discovery = []
-            fetch_limit_fill = needed * 3
-            # temp_added_keys now contains keys from vibe_anchors and familiar_anchors
-            for lib in libraries:
-                tracks = self._get_tracks_matching_mood_genre_style(lib, target_moods, target_styles, fetch_limit_fill)
-                for track in tracks:
-                    if track.ratingKey not in temp_added_keys: # Check against all already considered anchors
-                         additional_discovery.append(track)
-                         temp_added_keys.add(track.ratingKey) # Add to the set to avoid re-adding
-            
-            filtered_additional_discovery = self._apply_common_filters(additional_discovery, is_historical_track_list=False)
-            if filtered_additional_discovery:
-                random.shuffle(filtered_additional_discovery)
-                combined_anchors.extend(filtered_additional_discovery[:needed]) # Add only up to 'needed'
-            logger.info(f"Pool size after attempting to fill: {len(combined_anchors)}")
-
-
-        final_tracks = combined_anchors
-        if config.TIME_PLAYLIST_SONIC_SORT and len(final_tracks) > 1:
-            final_tracks = self._sort_by_sonic_similarity_greedy(
-                final_tracks,
-                score_limit=config.TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT,
-                score_max_distance=config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE
-            )
-        else:
-            random.shuffle(final_tracks)
-
-        k = min(playlist_target_size, len(final_tracks))
-        selected_tracks = final_tracks[:k]
-        
-        logger.info(f"Selected {len(selected_tracks)} tracks for '{active_period_name}' Harmoniq Flow playlist.")
-        return selected_tracks
