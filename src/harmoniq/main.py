@@ -9,58 +9,84 @@ from .lastfm_client import LastfmClient
 
 # --- Helper Function to get current active period details ---
 def get_active_period_details() -> dict | None:
-    """
-    Determines the current active named period and its details (start_hour, criteria)
-    based on the SCHEDULED_PERIODS from config.py.
-    The last period defined before the current hour is considered active.
-    Handles wrap-around for the first period of the day.
-    """
-    if not config.SCHEDULED_PERIODS: # This is populated by config.py
+    if not config.SCHEDULED_PERIODS: 
         logger.debug("No scheduled periods configured or parsed.")
         return None
-
     try:
-        timezone = pytz.timezone(config.TIMEZONE)
-        now_local = datetime.now(timezone)
+        tz = pytz.timezone(config.TIMEZONE)
+        now_local = datetime.now(tz)
         current_hour = now_local.hour
         logger.debug(f"Current local time for period check: {now_local.strftime('%Y-%m-%d %H:%M:%S %Z%z')}, Current Hour: {current_hour}")
     except Exception as e:
         logger.error(f"Error getting current time with timezone '{config.TIMEZONE}': {e}. Defaulting to UTC.")
-        now_local = datetime.now(pytz.utc); current_hour = now_local.hour
+        now_local = datetime.now(pytz.utc)
+        current_hour = now_local.hour
 
-    # SCHEDULED_PERIODS is already sorted by start_hour in config.py
-    active_period = None
+    active_period_candidate = None
     
-    # Find the latest period that has started but is not past the current hour
-    # If current_hour is before the first scheduled period's start_hour, it means we're in the "last" period of the previous day
-    # which wraps around.
-    
-    if not config.SCHEDULED_PERIODS: # Should not happen if config parsing worked
-        return None
-
-    # Default to the last period in the schedule (handles wrap-around for early morning hours)
-    active_period = config.SCHEDULED_PERIODS[-1] 
-
-    for period_details in config.SCHEDULED_PERIODS:
-        if period_details['start_hour'] <= current_hour:
-            active_period = period_details
-        else:
-            # We've passed the current hour, so the *previous* period was the correct one
+    # SCHEDULED_PERIODS is sorted by start_hour in config.py
+    # Find the latest period that has started
+    for p_details in config.SCHEDULED_PERIODS:
+        if p_details['start_hour'] <= current_hour:
+            active_period_candidate = p_details
+        elif active_period_candidate is None and p_details['start_hour'] > current_hour:
+            # If current hour is before the first scheduled period, use the last period of the day (wraparound)
+            active_period_candidate = config.SCHEDULED_PERIODS[-1]
             break 
-            # This break is important because SCHEDULED_PERIODS is sorted by start_hour
+        elif p_details['start_hour'] > current_hour:
+            # We've passed current_hour, so the previous candidate was correct
+            break
+            
+    # If loop finishes and active_period_candidate is still None (e.g., empty SCHEDULED_PERIODS after all),
+    # or if current hour is before the first period in a non-empty list.
+    if active_period_candidate is None and config.SCHEDULED_PERIODS:
+        active_period_candidate = config.SCHEDULED_PERIODS[-1] # Default to last for wraparound
+    
+    if active_period_candidate:
+        # Calculate the set of hours for this active period
+        period_name = active_period_candidate['name']
+        start_h = active_period_candidate['start_hour']
+        
+        current_period_index = -1
+        for i, p_conf in enumerate(config.SCHEDULED_PERIODS):
+            if p_conf['name'] == period_name:
+                current_period_index = i
+                break
+        
+        end_h_exclusive = 24 # Default to end of day
+        if current_period_index != -1 : # Should always be found
+            if current_period_index + 1 < len(config.SCHEDULED_PERIODS):
+                end_h_exclusive = config.SCHEDULED_PERIODS[current_period_index + 1]['start_hour']
+            else: # This is the last defined period, so it runs until the first period of the next day
+                end_h_exclusive = config.SCHEDULED_PERIODS[0]['start_hour'] 
+                # If end_h_exclusive is <= start_h, it means it wraps around midnight.
+                # If it wraps, hours are start_h..23 and 0..end_h_exclusive-1
+                # If it doesn't wrap past first period (e.g. last period 22:00, first is 05:00), it effectively means up to 24:00 (exclusive)
+                if end_h_exclusive > start_h : end_h_exclusive = 24 # Not wrapping past midnight to next day's first period start time
 
-    if active_period:
-        logger.info(f"Active period identified: '{active_period['name']}' (starts {active_period['start_hour']:02d}:00). Criteria: {active_period['criteria']}")
-        return active_period
+
+        active_hours_set = set()
+        if start_h < end_h_exclusive: # Normal day segment or ends at midnight (represented as 24)
+            for h_loop in range(start_h, end_h_exclusive):
+                active_hours_set.add(h_loop)
+        else: # Overnight segment (e.g. 22:00 start, next period starts at 05:00 next day)
+            for h_loop in range(start_h, 24): 
+                active_hours_set.add(h_loop)
+            for h_loop in range(0, end_h_exclusive): 
+                active_hours_set.add(h_loop)
+        
+        # Create a copy to add 'hours_set' to, to avoid modifying the global config.SCHEDULED_PERIODS items
+        return_period_details = active_period_candidate.copy()
+        return_period_details['hours_set'] = active_hours_set
+        logger.info(f"Active period: '{period_name}' (Starts {start_h:02d}:00). Effective Hours: {sorted(list(active_hours_set))}. Criteria: {return_period_details['criteria']}")
+        return return_period_details
     else:
-        # This case should ideally not be hit if SCHEDULED_PERIODS is populated,
-        # as we default to the last period. But as a fallback:
         logger.warning(f"Could not determine active period for current hour: {current_hour}. Using fallback 'DefaultVibe'.")
-        return {
-            'name': 'DefaultVibe', 
-            'start_hour': current_hour, # Not strictly accurate but for context
-            'criteria': config.DEFAULT_PERIOD_VIBES.get("DefaultVibe", {"moods":[], "styles":[]})
-            }
+        return { 
+            'name': 'DefaultVibe', 'start_hour': current_hour, 
+            'criteria': config.DEFAULT_PERIOD_VIBES.get("DefaultVibe", {"moods":[], "styles":[]}),
+            'hours_set': set(range(24)) 
+        }
 
 # --- Generic function to process playlist data from external sources (Last.fm) ---
 # (This _process_sourced_playlist helper function remains the same as your last version)
@@ -88,43 +114,51 @@ def _process_sourced_playlist(plex_client, valid_music_libraries, target_library
 
 
 # --- Function specifically for Harmoniq Flow update ---
-# Now accepts active_period_details directly from the scheduler
 def run_harmoniq_flow_update(plex_client: PlexClient, valid_music_libraries: list, target_library, active_period_details: dict | None):
     """Handles the update logic for the Time-Based 'Harmoniq Flow' Playlist."""
     if not (config.ENABLE_TIME_PLAYLIST and plex_client and valid_music_libraries):
         logger.info("Skipping Harmoniq Flow: Feature disabled or Plex client/libraries not available.")
         return
 
-    if not active_period_details: # Get details if not passed (e.g., for manual run)
+    if not active_period_details: 
+        # This might be called if the scheduler passes None, or if get_active_period_details fails for some reason
+        logger.warning("run_harmoniq_flow_update called with no active_period_details. Attempting to determine.")
         active_period_details = get_active_period_details() 
 
-    if active_period_details:
+    if active_period_details and 'hours_set' in active_period_details: # Ensure hours_set is present
         period_name = active_period_details['name']
-        moods_to_match = active_period_details['criteria']['moods']
-        styles_to_match = active_period_details['criteria']['styles']
+        target_moods = active_period_details['criteria']['moods']
+        target_styles = active_period_details['criteria']['styles'] # These are genres_or_styles
         
+        # Directly use the 'hours_set' provided by get_active_period_details
+        period_hours_set = active_period_details['hours_set']
+
         logger.info(f"Processing Harmoniq Flow for period '{period_name}'...")
-        logger.info(f"Period criteria: Moods={moods_to_match}, Styles/Genres={styles_to_match}")
+        logger.info(f"Period criteria: Moods={target_moods}, Styles/Genres={target_styles}, Effective Hours={sorted(list(period_hours_set))}")
         
-        time_based_tracks = plex_client.find_tracks_by_criteria( # This is the method we've been working on
+        time_based_tracks = plex_client.generate_harmoniq_flow_playlist( # Call the new method
             libraries=valid_music_libraries,
-            moods=moods_to_match,
-            styles=styles_to_match, # Treated as genres in find_tracks_by_criteria
-            limit=config.PLAYLIST_SIZE_TIME
+            active_period_name=period_name,
+            target_moods=target_moods,
+            target_styles=target_styles,
+            period_active_hours=period_hours_set, 
+            playlist_target_size=config.PLAYLIST_SIZE_TIME
         )
 
         if time_based_tracks:
-            logger.info(f"Found {len(time_based_tracks)} tracks for the '{period_name}' period.")
+            logger.info(f"Generated {len(time_based_tracks)} tracks for the '{period_name}' period.")
             success = plex_client.update_playlist(
-                playlist_name=config.PLAYLIST_NAME_TIME, # Use the single Harmoniq Flow playlist name
+                playlist_name=config.PLAYLIST_NAME_TIME, 
                 tracks_to_add=time_based_tracks,
                 music_library=target_library
             )
-            if success: logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' playlist for '{period_name}'.")
-            else: logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' playlist for '{period_name}'.")
+            if success: logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
+            else: logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
         else:
-            logger.info(f"No tracks found matching criteria for '{period_name}'. '{config.PLAYLIST_NAME_TIME}' not updated.")
-    else:
+            logger.info(f"No tracks generated for '{period_name}'. '{config.PLAYLIST_NAME_TIME}' not updated.")
+    elif active_period_details and 'hours_set' not in active_period_details:
+        logger.error(f"Active period details for '{active_period_details.get('name')}' is missing 'hours_set'. Cannot process Harmoniq Flow.")
+    else: # active_period_details was None
         logger.info("No active time period determined. 'Harmoniq Flow' playlist will not be updated.")
 
 
