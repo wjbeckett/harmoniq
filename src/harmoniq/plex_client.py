@@ -726,7 +726,7 @@ class PlexClient:
         if not skeleton_playlist and (vibe_anchors or familiar_anchors): # Fallback
             skeleton_playlist.extend(vibe_anchors)
             for fa_fb in familiar_anchors:
-                 if fa_fb.ratingKey not in skeleton_keys: skeleton_playlist.append(fa_fb); skeleton_keys.add(fa_fb.ratingKey)
+                if fa_fb.ratingKey not in skeleton_keys: skeleton_playlist.append(fa_fb); skeleton_keys.add(fa_fb.ratingKey)
         logger.info(f"Built skeleton playlist with {len(skeleton_playlist)} unique anchors: {[t.title for t in skeleton_playlist]}")
 
         # --- Bridge Anchors with Sonic Adventure OR use Greedy Sort ---
@@ -775,6 +775,7 @@ class PlexClient:
                     score_max_distance=config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE)
         
         # --- Optional Sonic Expansion ---
+        MAX_TRACKS_PER_ARTIST_FOR_EXPANSION_FILL = 2
         if config.TIME_PLAYLIST_USE_SONIC_EXPANSION and len(final_playlist_tracks) < actual_limit:
             logger.info("Attempting Sonic Expansion to fill remaining playlist space...")
             num_needed_for_expansion = actual_limit - len(final_playlist_tracks)
@@ -787,47 +788,71 @@ class PlexClient:
                     logger.debug(f"Fetching expansion tracks for seed {i+1}/{num_expansion_seeds}: '{seed_track.title}'") # num_expansion_seeds is correct here
                     try:
                         time.sleep(0.1)
-                        fetch_per_seed = max(5, (num_needed_for_expansion // num_expansion_seeds) + 2 if num_expansion_seeds > 0 else 5)
+                        fetch_per_seed = max(3, (num_needed_for_expansion // num_expansion_seeds) + 2 if num_expansion_seeds > 0 else 3)
                         similar = seed_track.sonicallySimilar(limit=min(fetch_per_seed, config.TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED * 2), maxDistance=config.TIME_PLAYLIST_SONIC_MAX_DISTANCE)
-                        for s_track in similar:
-                            if s_track.ratingKey not in processed_final_keys: temp_expansion_candidates.append(s_track) # Don't add to processed_final_keys yet
+                        for s_track in similar: # No processed_final_keys check here, collect all, filter later
+                            temp_expansion_candidates.append(s_track)
                     except PlexApiException as e: logger.warning(f"Sonic expansion error for '{seed_track.title}': {e}")
                     except Exception as e: logger.exception(f"Unexpected error during sonic expansion for '{seed_track.title}': {e}")
                 if temp_expansion_candidates:
                     logger.info(f"Collected {len(temp_expansion_candidates)} unique tracks from sonic expansion (before filtering).")
-                    filtered_expansion_tracks = self._apply_common_filters(temp_expansion_candidates, is_historical_track_list=False)
+                    unique_temp_expansion_candidates = list({t.ratingKey: t for t in temp_expansion_candidates}.values())
+                    filtered_expansion_tracks = self._apply_common_filters(unique_temp_expansion_candidates, is_historical_track_list=False)
                     logger.info(f"{len(filtered_expansion_tracks)} expansion tracks remaining after filters.")
+                    
+                    artist_counts_expansion_fill = {}
                     added_expansion_count = 0
+                    random.shuffle(filtered_expansion_tracks)
                     for exp_track in filtered_expansion_tracks:
                         if len(final_playlist_tracks) >= actual_limit: break
                         if exp_track.ratingKey not in processed_final_keys:
-                            final_playlist_tracks.append(exp_track); processed_final_keys.add(exp_track.ratingKey); added_expansion_count +=1
+                            artist_title = exp_track.grandparentTitle
+                            if artist_counts_expansion_fill.get(artist_title, 0) < MAX_TRACKS_PER_ARTIST_FOR_EXPANSION_FILL:
+                                final_playlist_tracks.append(exp_track)
+                                processed_final_keys.add(exp_track.ratingKey)
+                                artist_counts_expansion_fill[artist_title] = artist_counts_expansion_fill.get(artist_title, 0) + 1
+                                added_expansion_count +=1
+                            else:
+                                logger.debug(f"Skipping expansion track '{exp_track.title}' by '{artist_title}', artist limit reached for this fill stage.")
                     logger.info(f"Added {added_expansion_count} tracks from sonic expansion. Playlist size: {len(final_playlist_tracks)}")
 
         # --- Padding with more mood/genre tracks if still short ---
+        MAX_TRACKS_PER_ARTIST_FOR_PADDING_FILL = 2
         if len(final_playlist_tracks) < actual_limit:
             needed = actual_limit - len(final_playlist_tracks)
             logger.info(f"Playlist still short by {needed}. Fetching more mood/genre discovery tracks for padding...")
-            additional_discovery = []; fetch_limit_padding = needed * 5 
+            additional_discovery = []
+            fetch_limit_padding = needed * 10
             for lib in libraries:
                 tracks = self._get_tracks_matching_mood_genre_style(lib, target_moods, target_styles, fetch_limit_padding)
                 for track in tracks:
-                    if track.ratingKey not in processed_final_keys: additional_discovery.append(track) 
+                    additional_discovery.append(track)
             if additional_discovery:
-                filtered_additional_discovery = self._apply_common_filters(additional_discovery, is_historical_track_list=False)
-                logger.info(f"Found {len(filtered_additional_discovery)} additional discovery tracks for padding (after filters).")
+                unique_additional_discovery = list({t.ratingKey: t for t in additional_discovery if t.ratingKey not in processed_final_keys}.values())
+                filtered_additional_discovery = self._apply_common_filters(unique_additional_discovery, is_historical_track_list=False)
+                logger.info(f"Found {len(filtered_additional_discovery)} additional discovery tracks for padding (after filters & initial dedupe).")
+                
+                artist_counts_padding_fill = {}
                 added_padding_count = 0
+                random.shuffle(filtered_additional_discovery)
                 for pad_track in filtered_additional_discovery:
                     if len(final_playlist_tracks) >= actual_limit: break
                     if pad_track.ratingKey not in processed_final_keys:
-                        final_playlist_tracks.append(pad_track); processed_final_keys.add(pad_track.ratingKey); added_padding_count +=1
+                        artist_title = pad_track.grandparentTitle
+                        if artist_counts_padding_fill.get(artist_title, 0) < MAX_TRACKS_PER_ARTIST_FOR_PADDING_FILL:
+                            final_playlist_tracks.append(pad_track)
+                            processed_final_keys.add(pad_track.ratingKey)
+                            artist_counts_padding_fill[artist_title] = artist_counts_padding_fill.get(artist_title, 0) + 1
+                            added_padding_count +=1
+                        else:
+                            logger.debug(f"Skipping padding track '{pad_track.title}' by '{artist_title}', artist limit reached for this fill stage.")
                 logger.info(f"Added {added_padding_count} padding tracks. Playlist size: {len(final_playlist_tracks)}")
 
         # --- Final Deduplication, Sort, and Limit ---
-        unique_final_tracks = list(dict.fromkeys(final_playlist_tracks)) # Preserves order while removing duplicates
+        unique_final_tracks = list(dict.fromkeys(final_playlist_tracks))
         if not config.TIME_PLAYLIST_USE_SONIC_ADVENTURE and config.TIME_PLAYLIST_SONIC_SORT and len(unique_final_tracks) > 1:
             logger.info("Applying Greedy Sonic Sort as a final step (Sonic Adventure was not used).")
-            selected_tracks = self._sort_by_sonic_similarity_greedy(unique_final_tracks, score_limit=config.TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT, score_max_distance=config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE)
+            selected_tracks = self._sort_by_sonic_similarity_greedy(unique_final_tracks, config.TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT, config.TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE)
         else:
             if not config.TIME_PLAYLIST_USE_SONIC_ADVENTURE and not config.TIME_PLAYLIST_SONIC_SORT: random.shuffle(unique_final_tracks)
             selected_tracks = unique_final_tracks
@@ -836,7 +861,7 @@ class PlexClient:
         final_selected_tracks = selected_tracks[:final_k]
         
         flow_method = "unknown"
-        if config.TIME_PLAYLIST_USE_SONIC_ADVENTURE and len(skeleton_playlist) >=2 : flow_method = "sonic adventure paths"
+        if config.TIME_PLAYLIST_USE_SONIC_ADVENTURE and len(skeleton_playlist) >=2 and any(adv_track for adv_track in final_selected_tracks if adv_track.ratingKey not in skeleton_keys) : flow_method = "sonic adventure paths" # Check if adventure actually added tracks
         elif config.TIME_PLAYLIST_SONIC_SORT and len(final_selected_tracks) > 1: flow_method = "greedy sonic sort"
         else: flow_method = "mood/genre + expansion (randomized)"
         logger.info(f"Selected {len(final_selected_tracks)} tracks for '{active_period_name}' Harmoniq Flow (flow by: {flow_method}).")
