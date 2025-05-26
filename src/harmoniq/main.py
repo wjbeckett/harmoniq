@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 import pytz
-from . import config # config.py now parses SCHEDULED_PERIODS
+from . import config
 from .log_config import logger
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
@@ -64,7 +64,6 @@ def get_active_period_details() -> dict | None:
                 # If it doesn't wrap past first period (e.g. last period 22:00, first is 05:00), it effectively means up to 24:00 (exclusive)
                 if end_h_exclusive > start_h : end_h_exclusive = 24 # Not wrapping past midnight to next day's first period start time
 
-
         active_hours_set = set()
         if start_h < end_h_exclusive: # Normal day segment or ends at midnight (represented as 24)
             for h_loop in range(start_h, end_h_exclusive):
@@ -121,45 +120,37 @@ def run_harmoniq_flow_update(plex_client: PlexClient, valid_music_libraries: lis
         return
 
     if not active_period_details: 
-        # This might be called if the scheduler passes None, or if get_active_period_details fails for some reason
-        logger.warning("run_harmoniq_flow_update called with no active_period_details. Attempting to determine.")
         active_period_details = get_active_period_details() 
 
-    if active_period_details and 'hours_set' in active_period_details: # Ensure hours_set is present
+    if active_period_details and 'hours_set' in active_period_details:
         period_name = active_period_details['name']
-        target_moods = active_period_details['criteria']['moods']
-        target_styles = active_period_details['criteria']['styles'] # These are genres_or_styles
-        
-        # Directly use the 'hours_set' provided by get_active_period_details
+        # These are the BASE target moods/styles from config (default or user TP_DEFINE_ override)
+        base_target_moods = active_period_details['criteria']['moods']
+        base_target_styles = active_period_details['criteria']['styles']
         period_hours_set = active_period_details['hours_set']
-
-        logger.info(f"Processing Harmoniq Flow for period '{period_name}'...")
-        logger.info(f"Period criteria: Moods={target_moods}, Styles/Genres={target_styles}, Effective Hours={sorted(list(period_hours_set))}")
         
-        time_based_tracks = plex_client.generate_harmoniq_flow_playlist( # Call the new method
+        # Vibe learning and augmentation will now happen INSIDE generate_harmoniq_flow_playlist
+        
+        logger.info(f"Processing Harmoniq Flow for period '{period_name}'...")
+        # The log for "Effective Period Criteria" will now appear inside generate_harmoniq_flow_playlist
+        # after it has potentially learned from history.
+        
+        time_based_tracks = plex_client.generate_harmoniq_flow_playlist(
             libraries=valid_music_libraries,
             active_period_name=period_name,
-            target_moods=target_moods,
-            target_styles=target_styles,
+            base_target_moods=base_target_moods,   # Pass BASE moods
+            base_target_styles=base_target_styles, # Pass BASE styles
             period_active_hours=period_hours_set, 
             playlist_target_size=config.PLAYLIST_SIZE_TIME
         )
 
         if time_based_tracks:
-            logger.info(f"Generated {len(time_based_tracks)} tracks for the '{period_name}' period.")
-            success = plex_client.update_playlist(
-                playlist_name=config.PLAYLIST_NAME_TIME, 
-                tracks_to_add=time_based_tracks,
-                music_library=target_library
-            )
+            logger.info(f"Generated {len(time_based_tracks)} tracks for the '{period_name}' period for playlist update.")
+            success = plex_client.update_playlist(config.PLAYLIST_NAME_TIME, time_based_tracks, target_library)
             if success: logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
             else: logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
         else:
             logger.info(f"No tracks generated for '{period_name}'. '{config.PLAYLIST_NAME_TIME}' not updated.")
-    elif active_period_details and 'hours_set' not in active_period_details:
-        logger.error(f"Active period details for '{active_period_details.get('name')}' is missing 'hours_set'. Cannot process Harmoniq Flow.")
-    else: # active_period_details was None
-        logger.info("No active time period determined. 'Harmoniq Flow' playlist will not be updated.")
 
 
 # --- Function specifically for Last.fm and other external services ---
