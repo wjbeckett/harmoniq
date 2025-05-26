@@ -124,52 +124,33 @@ def run_harmoniq_flow_update(plex_client: PlexClient, valid_music_libraries: lis
 
     if active_period_details and 'hours_set' in active_period_details:
         period_name = active_period_details['name']
-        base_target_moods = list(active_period_details['criteria']['moods'])
-        base_target_styles = list(active_period_details['criteria']['styles'])
-        
+        # These are the BASE target moods/styles from config (default or user TP_DEFINE_ override)
+        base_target_moods = active_period_details['criteria']['moods']
+        base_target_styles = active_period_details['criteria']['styles']
         period_hours_set = active_period_details['hours_set']
         
-        effective_moods = list(base_target_moods)
-        effective_styles = list(base_target_styles)
-
-        if config.TIME_PLAYLIST_LEARN_FROM_HISTORY:
-            logger.info(f"Attempting to learn dominant vibes from history for period '{period_name}'...")
-            dominant_hist_moods, dominant_hist_styles_genres = plex_client._analyze_historical_vibe_for_period(
-                valid_music_libraries,
-                period_hours_set
-            )
-            if dominant_hist_moods:
-                logger.info(f"Augmenting target moods with learned historical moods: {dominant_hist_moods}")
-                for mood in dominant_hist_moods:
-                    if mood not in effective_moods: effective_moods.append(mood)
-            if dominant_hist_styles_genres:
-                logger.info(f"Augmenting target styles/genres with learned historical styles/genres: {dominant_hist_styles_genres}")
-                for sg in dominant_hist_styles_genres:
-                    if sg not in effective_styles: effective_styles.append(sg)
+        # Vibe learning and augmentation will now happen INSIDE generate_harmoniq_flow_playlist
         
         logger.info(f"Processing Harmoniq Flow for period '{period_name}'...")
-        logger.info(f"Effective Period Criteria: Moods={effective_moods}, Styles/Genres={effective_styles}, Effective Hours={sorted(list(period_hours_set))}")
+        # The log for "Effective Period Criteria" will now appear inside generate_harmoniq_flow_playlist
+        # after it has potentially learned from history.
         
         time_based_tracks = plex_client.generate_harmoniq_flow_playlist(
             libraries=valid_music_libraries,
             active_period_name=period_name,
-            target_moods=effective_moods,
-            target_styles=effective_styles,
+            base_target_moods=base_target_moods,   # Pass BASE moods
+            base_target_styles=base_target_styles, # Pass BASE styles
             period_active_hours=period_hours_set, 
             playlist_target_size=config.PLAYLIST_SIZE_TIME
         )
 
         if time_based_tracks:
-            logger.info(f"Generated {len(time_based_tracks)} tracks for the '{period_name}' period.")
+            logger.info(f"Generated {len(time_based_tracks)} tracks for the '{period_name}' period for playlist update.")
             success = plex_client.update_playlist(config.PLAYLIST_NAME_TIME, time_based_tracks, target_library)
             if success: logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
             else: logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
         else:
             logger.info(f"No tracks generated for '{period_name}'. '{config.PLAYLIST_NAME_TIME}' not updated.")
-    elif active_period_details and 'hours_set' not in active_period_details:
-        logger.error(f"Active period details for '{active_period_details.get('name')}' is missing 'hours_set'. Cannot process Harmoniq Flow.")
-    else:
-        logger.info("No active time period determined. 'Harmoniq Flow' playlist will not be updated.")
 
 
 # --- Function specifically for Last.fm and other external services ---
