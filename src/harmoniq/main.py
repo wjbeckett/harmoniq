@@ -155,34 +155,37 @@ def run_harmoniq_flow_update(plex_client: PlexClient, valid_music_libraries: lis
                 logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
                 if config.ENABLE_PLAYLIST_COVERS:
                     logger.info("Attempting to generate and upload playlist cover...")
-                    # For cover generation, we need the *final effective* moods/styles
-                    # that were used by generate_harmoniq_flow_playlist.
-                    # This implies generate_harmoniq_flow_playlist might need to return them,
-                    # or we re-calculate them here based on what it logged.
-                    # For now, let's pass the base ones, and refine if generate_harmoniq_flow_playlist
-                    # starts returning the effective ones.
-                    # OR, even better, the generate_playlist_cover could use the playlist object
-                    # itself to analyze its content for dominant moods/styles if that's desired.
-                    # Let's keep it simple and pass the base for now.
                     cover_image_path = generate_playlist_cover(
                         playlist_title=config.PLAYLIST_NAME_TIME,
                         period_name=period_name,
-                        active_moods=base_target_moods, # Using base for cover for now
-                        active_styles=base_target_styles  # Using base for cover for now
+                        active_moods=base_target_moods, 
+                        active_styles=base_target_styles
                     )
-                    # ... (rest of cover upload logic) ...
-                    if cover_image_path and os.path.exists(cover_image_path):
+                    
+                    if cover_image_path and os.path.exists(cover_image_path): # os is available here
                         try:
                             plex_playlist_obj = plex_client.plex.playlist(config.PLAYLIST_NAME_TIME)
-                            if plex_playlist_obj: plex_client.upload_playlist_cover(plex_playlist_obj, cover_image_path)
-                            else: logger.warning(f"Could not retrieve playlist '{config.PLAYLIST_NAME_TIME}' to upload cover.")
-                        except Exception as e_cover_upload: logger.error(f"Failed to retrieve playlist or upload cover: {e_cover_upload}")
+                            if plex_playlist_obj:
+                                plex_client.upload_playlist_cover(plex_playlist_obj, cover_image_path)
+                            else: 
+                                logger.warning(f"Could not retrieve playlist '{config.PLAYLIST_NAME_TIME}' to upload cover.")
+                        except Exception as e_cover_upload: 
+                            # --- MODIFIED LOGGING HERE ---
+                            logger.error(f"Caught exception during cover retrieval/upload. Error: {e_cover_upload}")
+                            logger.exception("Full traceback for cover upload failure:") # This will print the traceback
+                            # --- END MODIFIED LOGGING ---
                         finally:
+                            # ... (finally block with os.path.exists and os.remove - this part seems to work) ...
+                            logger.debug(f"DEBUG_OS: Type of 'os' in finally: {type(os)}")
+                            logger.debug(f"DEBUG_OS: os.path.exists available: {hasattr(os, 'path') and hasattr(os.path, 'exists')}")
                             if os.path.exists(config.COVER_OUTPUT_PATH):
-                                try: os.remove(config.COVER_OUTPUT_PATH); logger.debug(f"Temp cover '{config.COVER_OUTPUT_PATH}' removed.")
-                                except OSError as e_remove: logger.warning(f"Could not remove temp cover '{config.COVER_OUTPUT_PATH}': {e_remove}")
-                    elif cover_image_path: logger.warning(f"Cover path '{cover_image_path}' but file no exist. Skipping upload.")
-                    else: logger.warning("Playlist cover generation failed/skipped. No cover uploaded.")
+                                try: 
+                                    os.remove(config.COVER_OUTPUT_PATH)
+                                    logger.debug(f"Temp cover '{config.COVER_OUTPUT_PATH}' removed.")
+                                except OSError as e_remove: 
+                                    logger.warning(f"Could not remove temp cover '{config.COVER_OUTPUT_PATH}': {e_remove}")
+                            else:
+                                logger.debug(f"DEBUG_OS: Temp cover file {config.COVER_OUTPUT_PATH} does not exist for removal (or os.path.exists failed).")
             else: logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' for '{period_name}', cover not generated.")
         else:
             logger.info(f"No tracks generated for '{period_name}'. '{config.PLAYLIST_NAME_TIME}' not updated.")
