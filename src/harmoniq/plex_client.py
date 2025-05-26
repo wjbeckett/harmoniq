@@ -1010,3 +1010,20 @@ class PlexClient:
         except Exception as e: logger.exception(f"An unexpected error occurred updating playlist '{playlist_name}': {e}"); return False
         logger.error(f"Reached end of update_playlist for '{playlist_name}' without clear success/failure."); return False
     
+    def upload_playlist_cover(self, playlist_obj: Playlist, image_filepath: str):
+        """Uploads a cover image to the specified Plex playlist object."""
+        if not playlist_obj:
+            logger.error("Cannot upload cover: Invalid playlist object provided.")
+            return False
+        if not image_filepath or not os.path.exists(image_filepath):
+            logger.error(f"Cannot upload cover: Image file not found at '{image_filepath}'.")
+            return False
+        
+        try:
+            logger.info(f"Uploading cover '{image_filepath}' to playlist '{playlist_obj.title}'...")
+            playlist_obj.uploadPoster(filepath=image_filepath)
+            logger.info("Playlist cover uploaded successfully.")
+            return True
+        except Exception as e:
+            logger.exception(f"Failed to upload cover to playlist '{playlist_obj.title}': {e}")
+            return False

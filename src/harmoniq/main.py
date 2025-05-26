@@ -1,4 +1,5 @@
 # src/harmoniq/main.py
+import os
 import logging
 from datetime import datetime
 import pytz
@@ -6,6 +7,7 @@ from . import config
 from .log_config import logger
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
+from .image_utils import generate_playlist_cover
 
 # --- Helper Function to get current active period details ---
 def get_active_period_details() -> dict | None:
@@ -125,18 +127,17 @@ def run_harmoniq_flow_update(plex_client: PlexClient, valid_music_libraries: lis
     if active_period_details and 'hours_set' in active_period_details:
         period_name = active_period_details['name']
         # These are the BASE target moods/styles from config (default or user TP_DEFINE_ override)
+        # The generate_harmoniq_flow_playlist method will handle learning/augmentation internally
         base_target_moods = active_period_details['criteria']['moods']
         base_target_styles = active_period_details['criteria']['styles']
         period_hours_set = active_period_details['hours_set']
         
-        # Vibe learning and augmentation will now happen INSIDE generate_harmoniq_flow_playlist
-        
-        logger.info(f"Processing Harmoniq Flow for period '{period_name}'...")
-        # The log for "Effective Period Criteria" will now appear inside generate_harmoniq_flow_playlist
-        # after it has potentially learned from history.
+        # The main processing, including vibe learning, is now inside generate_harmoniq_flow_playlist
+        logger.info(f"Processing Harmoniq Flow for period '{period_name}' using base criteria (learning will happen in PlexClient)...")
+        # logger.info(f"Base Period Criteria: Moods={base_target_moods}, Styles/Genres={base_target_styles}, Effective Hours={sorted(list(period_hours_set))}")
         
         time_based_tracks = plex_client.generate_harmoniq_flow_playlist(
-            libraries=valid_music_libraries,
+            libraries=valid_music_libraries, 
             active_period_name=period_name,
             base_target_moods=base_target_moods,   # Pass BASE moods
             base_target_styles=base_target_styles, # Pass BASE styles
@@ -146,11 +147,49 @@ def run_harmoniq_flow_update(plex_client: PlexClient, valid_music_libraries: lis
 
         if time_based_tracks:
             logger.info(f"Generated {len(time_based_tracks)} tracks for the '{period_name}' period for playlist update.")
-            success = plex_client.update_playlist(config.PLAYLIST_NAME_TIME, time_based_tracks, target_library)
-            if success: logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
-            else: logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
+            playlist_updated = plex_client.update_playlist(
+                config.PLAYLIST_NAME_TIME, time_based_tracks, target_library
+            )
+            
+            if playlist_updated:
+                logger.info(f"Successfully updated '{config.PLAYLIST_NAME_TIME}' for '{period_name}'.")
+                if config.ENABLE_PLAYLIST_COVERS:
+                    logger.info("Attempting to generate and upload playlist cover...")
+                    # For cover generation, we need the *final effective* moods/styles
+                    # that were used by generate_harmoniq_flow_playlist.
+                    # This implies generate_harmoniq_flow_playlist might need to return them,
+                    # or we re-calculate them here based on what it logged.
+                    # For now, let's pass the base ones, and refine if generate_harmoniq_flow_playlist
+                    # starts returning the effective ones.
+                    # OR, even better, the generate_playlist_cover could use the playlist object
+                    # itself to analyze its content for dominant moods/styles if that's desired.
+                    # Let's keep it simple and pass the base for now.
+                    cover_image_path = generate_playlist_cover(
+                        playlist_title=config.PLAYLIST_NAME_TIME,
+                        period_name=period_name,
+                        active_moods=base_target_moods, # Using base for cover for now
+                        active_styles=base_target_styles  # Using base for cover for now
+                    )
+                    # ... (rest of cover upload logic) ...
+                    if cover_image_path and os.path.exists(cover_image_path):
+                        try:
+                            plex_playlist_obj = plex_client.plex.playlist(config.PLAYLIST_NAME_TIME)
+                            if plex_playlist_obj: plex_client.upload_playlist_cover(plex_playlist_obj, cover_image_path)
+                            else: logger.warning(f"Could not retrieve playlist '{config.PLAYLIST_NAME_TIME}' to upload cover.")
+                        except Exception as e_cover_upload: logger.error(f"Failed to retrieve playlist or upload cover: {e_cover_upload}")
+                        finally:
+                            if os.path.exists(config.COVER_OUTPUT_PATH):
+                                try: os.remove(config.COVER_OUTPUT_PATH); logger.debug(f"Temp cover '{config.COVER_OUTPUT_PATH}' removed.")
+                                except OSError as e_remove: logger.warning(f"Could not remove temp cover '{config.COVER_OUTPUT_PATH}': {e_remove}")
+                    elif cover_image_path: logger.warning(f"Cover path '{cover_image_path}' but file no exist. Skipping upload.")
+                    else: logger.warning("Playlist cover generation failed/skipped. No cover uploaded.")
+            else: logger.error(f"Failed to update '{config.PLAYLIST_NAME_TIME}' for '{period_name}', cover not generated.")
         else:
             logger.info(f"No tracks generated for '{period_name}'. '{config.PLAYLIST_NAME_TIME}' not updated.")
+    elif active_period_details and 'hours_set' not in active_period_details:
+        logger.error(f"Active period details for '{active_period_details.get('name')}' missing 'hours_set'.")
+    else:
+        logger.info("No active time period. 'Harmoniq Flow' playlist not updated.")
 
 
 # --- Function specifically for Last.fm and other external services ---
@@ -180,8 +219,8 @@ def run_all_updates_once():
     valid_music_libraries = []
     if plex_client:
         for name in config.PLEX_MUSIC_LIBRARY_NAMES:
-             lib = plex_client.get_music_library(name)
-             if lib: valid_music_libraries.append(lib)
+            lib = plex_client.get_music_library(name)
+            if lib: valid_music_libraries.append(lib)
         if not valid_music_libraries: logger.error("No valid Plex music libraries for single run. Aborting."); return
     else: logger.error("Plex client not initialized for single run. Aborting."); return
     
