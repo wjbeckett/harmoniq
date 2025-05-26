@@ -67,7 +67,7 @@ try:
     PLAYLIST_SIZE_LASTFM_CHARTS = get_env_var("PLAYLIST_SIZE_LASTFM_CHARTS", 50, var_type=int)
     PLAYLIST_SIZE_TIME = get_env_var("PLAYLIST_SIZE_TIME", 40, var_type=int)
 
-    # --- NEW: Time Period Schedule & Vibe Overrides ---
+    # Time Period Schedule & Vibe Overrides
     TIME_PERIOD_SCHEDULE_RAW = get_env_var("TIME_PERIOD_SCHEDULE", default="Morning=7;Midday=12;Afternoon=16;Evening=19;LateNight=22")
     # Parsed structure: [{'name': 'Morning', 'start_hour': 7, 'moods': [...], 'styles': [...]}, ...]
     SCHEDULED_PERIODS = []
@@ -118,13 +118,13 @@ try:
 
     elif ENABLE_TIME_PLAYLIST: logger.warning("Harmoniq Flow enabled, but TIME_PERIOD_SCHEDULE is empty.")
 
-    # Time Playlist Refinements (as before)
-    TIME_PLAYLIST_MIN_RATING = get_env_var("TIME_PLAYLIST_MIN_RATING", default=0, var_type=int) # For discovery/adventure tracks
+    # Time Playlist Refinements
+    TIME_PLAYLIST_MIN_RATING = get_env_var("TIME_PLAYLIST_MIN_RATING", default=0, var_type=int)
     TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS = get_env_var("TIME_PLAYLIST_EXCLUDE_PLAYED_DAYS", default=0, var_type=int)
     TIME_PLAYLIST_MAX_SKIP_COUNT = get_env_var("TIME_PLAYLIST_MAX_SKIP_COUNT", default=999, var_type=int)
 
-    # Sonic Expansion & Sort (as before)
-    TIME_PLAYLIST_USE_SONIC_EXPANSION = get_env_var("TIME_PLAYLIST_USE_SONIC_EXPANSION", default=True, var_type=bool) # Default True now
+    # Sonic Expansion & Sort
+    TIME_PLAYLIST_USE_SONIC_EXPANSION = get_env_var("TIME_PLAYLIST_USE_SONIC_EXPANSION", default=True, var_type=bool)
     TIME_PLAYLIST_SONIC_SEED_TRACKS = get_env_var("TIME_PLAYLIST_SONIC_SEED_TRACKS", default=3, var_type=int)
     TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED = get_env_var("TIME_PLAYLIST_SIMILAR_TRACKS_PER_SEED", default=5, var_type=int)
     TIME_PLAYLIST_SONIC_MAX_DISTANCE = get_env_var("TIME_PLAYLIST_SONIC_MAX_DISTANCE", default=0.4, var_type=float)
@@ -133,17 +133,23 @@ try:
     TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT = get_env_var("TIME_PLAYLIST_SONIC_SORT_SIMILARITY_LIMIT", default=20, var_type=int)
     TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE = get_env_var("TIME_PLAYLIST_SONIC_SORT_MAX_DISTANCE", default=0.6, var_type=float)
 
-    # History Integration Config (as before)
+    # History Integration Config
     TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS = get_env_var("TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS", default=True, var_type=bool)
     TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS = get_env_var("TIME_PLAYLIST_HISTORY_LOOKBACK_DAYS", default=90, var_type=int)
     TIME_PLAYLIST_HISTORY_MIN_PLAYS = get_env_var("TIME_PLAYLIST_HISTORY_MIN_PLAYS", default=3, var_type=int)
     TIME_PLAYLIST_HISTORY_MIN_RATING = get_env_var("TIME_PLAYLIST_HISTORY_MIN_RATING", default=0, var_type=int)
     TIME_PLAYLIST_TARGET_HISTORY_COUNT = get_env_var("TIME_PLAYLIST_TARGET_HISTORY_COUNT", default=5, var_type=int)
     
-    # NEW for Vibe Adventure (Sonic Adventure specific)
+    # Vibe Adventure (Sonic Adventure specific)
     TIME_PLAYLIST_VIBE_ANCHOR_COUNT = get_env_var("TIME_PLAYLIST_VIBE_ANCHOR_COUNT", default=3, var_type=int)
-    TIME_PLAYLIST_USE_SONIC_ADVENTURE = get_env_var("TIME_PLAYLIST_USE_SONIC_ADVENTURE", default=False, var_type=bool) # Default False for now
-    #TIME_PLAYLIST_ADVENTURE_ANCHORS = get_env_var("TIME_PLAYLIST_ADVENTURE_ANCHORS", default=3, var_type=int)
+    TIME_PLAYLIST_USE_SONIC_ADVENTURE = get_env_var("TIME_PLAYLIST_USE_SONIC_ADVENTURE", default=False, var_type=bool)
+
+    # Learned Vibe Augmentation Configuration
+    TIME_PLAYLIST_LEARN_FROM_HISTORY = get_env_var("TIME_PLAYLIST_LEARN_FROM_HISTORY", default=True, var_type=bool)
+    TIME_PLAYLIST_LEARNED_VIBE_LOOKBACK_DAYS = get_env_var("TIME_PLAYLIST_LEARNED_VIBE_LOOKBACK_DAYS", default=60, var_type=int)
+    TIME_PLAYLIST_LEARNED_VIBE_TOP_N_MOODS = get_env_var("TIME_PLAYLIST_LEARNED_VIBE_TOP_N_MOODS", default=3, var_type=int)
+    TIME_PLAYLIST_LEARNED_VIBE_TOP_M_STYLES = get_env_var("TIME_PLAYLIST_LEARNED_VIBE_TOP_M_STYLES", default=3, var_type=int)
+    TIME_PLAYLIST_LEARNED_VIBE_MIN_OCCURRENCES = get_env_var("TIME_PLAYLIST_LEARNED_VIBE_MIN_OCCURRENCES", default=2, var_type=int)
 
     
     # Logging Level
