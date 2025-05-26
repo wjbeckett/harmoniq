@@ -39,9 +39,9 @@ DEFAULT_PERIOD_VIBES = {
     "Afternoon": {"moods": ["Energetic", "Rowdy", "Driving"], "styles": ["Rock", "Electronic", "Rap"]},
     "Evening": {"moods": ["Relaxed", "Cool", "Sentimental", "Romantic"], "styles": ["Jazz", "Blues", "Soul", "R&B"]},
     "LateNight": {"moods": ["Atmospheric", "Mellow", "Brooding", "Nocturnal"], "styles": ["Ambient", "Electronic", "Trip Hop", "Classical"]},
-    # Generic fallback
     "DefaultVibe": {"moods": ["Eclectic"], "styles": ["Mixed"]}
 }
+
 
 # --- Load Configuration Settings ---
 try:
@@ -141,8 +141,9 @@ try:
     TIME_PLAYLIST_TARGET_HISTORY_COUNT = get_env_var("TIME_PLAYLIST_TARGET_HISTORY_COUNT", default=5, var_type=int)
     
     # NEW for Vibe Adventure (Sonic Adventure specific)
+    TIME_PLAYLIST_VIBE_ANCHOR_COUNT = get_env_var("TIME_PLAYLIST_VIBE_ANCHOR_COUNT", default=3, var_type=int)
     TIME_PLAYLIST_USE_SONIC_ADVENTURE = get_env_var("TIME_PLAYLIST_USE_SONIC_ADVENTURE", default=False, var_type=bool) # Default False for now
-    TIME_PLAYLIST_ADVENTURE_ANCHORS = get_env_var("TIME_PLAYLIST_ADVENTURE_ANCHORS", default=3, var_type=int)
+    #TIME_PLAYLIST_ADVENTURE_ANCHORS = get_env_var("TIME_PLAYLIST_ADVENTURE_ANCHORS", default=3, var_type=int)
 
     
     # Logging Level
