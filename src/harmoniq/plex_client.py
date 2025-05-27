@@ -972,17 +972,17 @@ class PlexClient:
         logger.info(f"Dominant historical styles/genres from provided tracks: {dominant_styles_genres}")
         return dominant_moods, dominant_styles_genres
     
-    def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection):
+    def update_playlist(self, playlist_name: str, tracks_to_add: list, music_library: LibrarySection, 
+                        active_period_name: str | None = None): # Add active_period_name
         """
-        Creates a new Plex playlist or updates an existing one by clearing and adding the provided tracks.
-        Args:
-            playlist_name: Name of the playlist to create/update.
-            tracks_to_add: A list of plexapi.audio.Track objects.
-            music_library: The plexapi.library.LibrarySection object to use for context if creating the playlist.
+        Creates a new Plex playlist or updates an existing one.
+        Optionally includes the active period name in the summary.
         """
+        # ... (initial checks for self.plex, playlist_name, music_library as before) ...
         if not self.plex: logger.error("Cannot update playlist: Not connected to Plex."); return False
         if not playlist_name: logger.error("Cannot update playlist: Playlist name is empty."); return False
         if not music_library: logger.error("Cannot update playlist: Target music library context missing."); return False
+
         try:
             playlist: Playlist = None
             try:
@@ -996,14 +996,47 @@ class PlexClient:
                 if not tracks_to_add: logger.info(f"No tracks to add, skipping creation of empty playlist '{playlist_name}'."); return True
                 playlist = self.plex.createPlaylist(playlist_name, section=music_library, items=tracks_to_add)
                 logger.info(f"Successfully created playlist '{playlist_name}' in context of library '{music_library.title}' with {len(tracks_to_add)} tracks.")
+                # For new playlists, also set summary
+                if playlist: # Ensure playlist object exists
+                    try:
+                        timezone = pytz.timezone(config.TIMEZONE)
+                        now_local = datetime.now(timezone)
+                        timestamp_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z")
+                        summary = f"Updated by Harmoniq on {timestamp_str}. Contains {len(tracks_to_add)} tracks."
+                        if active_period_name and playlist_name == config.PLAYLIST_NAME_TIME: # Only add period to Harmoniq Flow
+                            summary += f" (Period: {active_period_name})"
+                        playlist.editSummary(summary)
+                    except Exception as e_sum: logger.warning(f"Could not set initial summary for '{playlist_name}': {e_sum}")
                 return True
+
             if playlist and tracks_to_add:
                 logger.info(f"Adding {len(tracks_to_add)} tracks to playlist '{playlist_name}'...")
                 playlist.addItems(tracks_to_add)
                 logger.info(f"Successfully updated playlist '{playlist_name}' with {len(tracks_to_add)} tracks.")
                 try:
-                    now = time.strftime("%Y-%m-%d %H:%M:%S %Z"); playlist.editSummary(f"Updated by Harmoniq on {now}. Contains {len(tracks_to_add)} tracks.")
-                except Exception as e: logger.warning(f"Could not update summary for playlist '{playlist_name}': {e}")
+                    # Generate timestamp in local timezone
+                    timezone = pytz.timezone(config.TIMEZONE)
+                    now_local = datetime.now(timezone)
+                    timestamp_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z") # e.g., "AEST" or "AEDT"
+                    
+                    summary = f"Updated by Harmoniq on {timestamp_str}. Contains {len(tracks_to_add)} tracks."
+                    # Add period name only if it's the Harmoniq Flow playlist
+                    if active_period_name and playlist_name == config.PLAYLIST_NAME_TIME:
+                        summary += f" (Period: {active_period_name.replace('EarlyMorning', 'Early Morning').replace('LateNight', 'Late Night')})"
+                    
+                    playlist.editSummary(summary)
+                except Exception as e_sum: logger.warning(f"Could not update summary for playlist '{playlist_name}': {e_sum}")
+                return True
+            elif playlist and not tracks_to_add: # Playlist exists but now is empty
+                logger.info(f"Playlist '{playlist_name}' exists but has no new tracks to add. Clearing summary and marking as refreshed.")
+                try:
+                    timezone = pytz.timezone(config.TIMEZONE); now_local = datetime.now(timezone)
+                    timestamp_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z")
+                    summary = f"Refreshed by Harmoniq on {timestamp_str}. Currently empty for this period."
+                    if active_period_name and playlist_name == config.PLAYLIST_NAME_TIME:
+                        summary += f" (Period: {active_period_name.replace('EarlyMorning', 'Early Morning').replace('LateNight', 'Late Night')})"
+                    playlist.editSummary(summary)
+                except Exception as e_sum: logger.warning(f"Could not update summary for empty playlist '{playlist_name}': {e_sum}")
                 return True
             elif playlist and not tracks_to_add:
                 logger.info(f"Playlist '{playlist_name}' exists but has no new tracks to add. Clearing summary if needed or marking as refreshed."); return True

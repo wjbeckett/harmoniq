@@ -108,8 +108,11 @@ def _process_sourced_playlist(plex_client, valid_music_libraries, target_library
             else: not_found_count +=1
         logger.info(f"{playlist_type} Matching complete. Found {len(matched_tracks)}. {not_found_count} not found.")
         if matched_tracks:
-            if plex_client.update_playlist(playlist_name_config, matched_tracks, target_library): logger.info(f"Successfully updated '{playlist_name_config}'.")
-            else: logger.error(f"Failed to update '{playlist_name_config}'.")
+        # Pass None for active_period_name for non-time-based playlists
+            if plex_client.update_playlist(playlist_name_config, matched_tracks, target_library, active_period_name=None): 
+                logger.info(f"Successfully updated '{playlist_name_config}'.")
+            else: 
+                logger.error(f"Failed to update '{playlist_name_config}'.")
         else: logger.info(f"No matching tracks for {playlist_type}. Playlist '{playlist_name_config}' not updated.")
     else: logger.info(f"No tracks from source for {playlist_type}.")
 
@@ -148,7 +151,10 @@ def run_harmoniq_flow_update(plex_client: PlexClient, valid_music_libraries: lis
         if time_based_tracks:
             logger.info(f"Generated {len(time_based_tracks)} tracks for the '{period_name}' period for playlist update.")
             playlist_updated = plex_client.update_playlist(
-                config.PLAYLIST_NAME_TIME, time_based_tracks, target_library
+                config.PLAYLIST_NAME_TIME, 
+                time_based_tracks, 
+                target_library,
+                active_period_name=period_name,
             )
             
             if playlist_updated:
