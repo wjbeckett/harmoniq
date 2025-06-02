@@ -5,7 +5,7 @@ feature:
   - feat/*
   - enhancement/*
 
-bugfix:
+bug:
   - bugfix/*
   - fix/*
   - bug/*
