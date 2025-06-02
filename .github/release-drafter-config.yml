@@ -1,0 +1,75 @@
+# Name of the next release (template using versions)
+name-template: 'Harmoniq $NEXT_PATCH_VERSION' # e.g., Harmoniq v0.1.1
+# Tag for the next release
+tag-template: 'v$NEXT_PATCH_VERSION' # e.g., v0.1.1
+
+# Define categories for your changelog based on PR labels
+# Add more labels as needed for your workflow
+categories:
+  - title: '🚀 New Features & Enhancements'
+    labels:
+      - 'feature'
+      - 'enhancement'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'fix'
+      - 'bug'
+  - title: '🛠 Maintenance & Refactoring'
+    labels:
+      - 'chore'
+      - 'refactor'
+      - 'ci'
+      - 'build'
+  - title: '📖 Documentation'
+    labels:
+      - 'documentation'
+  - title: '🧪 Tests' # If you add tests later
+    labels:
+      - 'test'
+      - 'tests'
+
+# Template for individual changes within categories
+# $TITLE: PR title
+# $NUMBER: PR number
+# $AUTHOR: PR author
+change-template: '- $TITLE (#$NUMBER) by @$AUTHOR'
+# Template for uncategorized changes (PRs without matching labels)
+# change-title-escapes: '\<*_&`#`' # Optional: characters to escape in PR titles
+
+# Overall template for the release notes body
+template: |
+  ## What's Changed in Harmoniq $RESOLVED_VERSION 🥁
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+# Replacers to clean up PR titles if needed (optional)
+# replacers:
+#   - search: /TL;DR/g
+#     replace: ''
+
+# Sort direction for changes within categories (ascending/descending)
+sort-direction: 'descending'
+
+# Include contributors section (optional)
+# contributors:
+#  - title: '🙏🏽 Thanks to our wonderful contributors!'
+#    template: '- @$CONTRIBUTOR (#$COUNT_CONTRIBUTIONS contributions)'
+
+# Versioning - how to determine the next version
+# Available: $MAJOR, $MINOR, $PATCH
+# For `NEXT_PATCH_VERSION`, it will increment the patch version from the last release.
+# You can also use `NEXT_MINOR_VERSION` or `NEXT_MAJOR_VERSION` if you use labels like 'release: minor'
+version-resolver:
+  major:
+    labels: ['release:major']
+  minor:
+    labels: ['release:minor']
+  patch:
+    labels: ['release:patch'] # Default if no specific release label
+  default: patch # If no labels, assume a patch
+
+# Exclude PRs with certain labels from the changelog (optional)
+# exclude-labels:
+#   - 'skip-changelog'

@@ -1,0 +1,43 @@
+name: Draft Next Release Notes
+
+on:
+  push:
+    branches:
+      # Branches to monitor for new PRs to include in the draft
+      - main
+      - develop # Choose your main development branch(es)
+  # Optional: Trigger when a PR is closed/merged
+  # pull_request_target:
+  #   types: [closed]
+  #   branches:
+  #     - main
+  #     - develop
+
+jobs:
+  update_release_draft:
+    name: Update Release Draft
+    runs-on: ubuntu-latest
+    # Only run this job if the push is to one of the specified branches,
+    # AND it's not a PR merge from a dependabot branch (to avoid draft churn for dep updates)
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')) || (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true && !startsWith(github.head_ref, 'dependabot/'))
+
+    steps:
+      # This step checks out the repository, though release-drafter primarily uses the GitHub API.
+      # It can be useful if your release-drafter config references files in the repo.
+      # - name: Checkout code
+      #   uses: actions/checkout@v4
+      #   with:
+      #     fetch-depth: 0 # Fetches all history for accurate changelog generation
+
+      - name: Draft Release Notes
+        id: create_release
+        uses: release-drafter/release-drafter@v6 # Use latest v6
+        with:
+          # Name of the configuration file in .github/ (optional, defaults to release-drafter.yml)
+          config-name: release-drafter-config.yml
+          # Set to true to automatically publish the release when a new tag matching tag-template is pushed
+          # For now, let's keep it false for manual publishing of the draft.
+          publish: false 
+        env:
+          # This token is used to create and update the draft release on GitHub
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
