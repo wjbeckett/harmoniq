@@ -713,9 +713,8 @@ class PlexClient:
     def generate_harmoniq_flow_playlist(self,
                                     libraries: list[LibrarySection],
                                     active_period_name: str,
-                                    # target_moods and target_styles will be determined *after* vibe learning
-                                    base_target_moods: list[str], # From config (default or user override)
-                                    base_target_styles: list[str],# From config (default or user override)
+                                    base_target_moods: list[str],
+                                    base_target_styles: list[str],
                                     period_active_hours: set[int],
                                     playlist_target_size: int
                                     ) -> list[PlexApiTrack]:
@@ -737,11 +736,11 @@ class PlexClient:
         # This call fetches tracks played *during period_active_hours* within *history_lookback* days
         all_period_historical_tracks = []
         if config.TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS or config.TIME_PLAYLIST_LEARN_FROM_HISTORY:
-             all_period_historical_tracks = self._get_raw_historical_tracks_for_period_hours(
-                 libraries, 
-                 history_lookback, # Use the lookback intended for finding "familiar" tracks
-                 period_active_hours
-             )
+            all_period_historical_tracks = self._get_raw_historical_tracks_for_period_hours(
+                libraries, 
+                history_lookback, # Use the lookback intended for finding "familiar" tracks
+                period_active_hours
+            )
 
         # --- Vibe Learning/Augmentation Step ---
         effective_moods = list(base_target_moods) # Start with base/override
@@ -886,35 +885,34 @@ class PlexClient:
                     logger.info(f"Added {added_expansion_count} tracks from sonic expansion. Playlist size: {len(final_playlist_tracks)}")
 
         # --- Padding with more mood/genre tracks if still short ---
-        MAX_TRACKS_PER_ARTIST_FOR_PADDING_FILL = 2
+        MAX_TRACKS_PER_ARTIST_FOR_PADDING_FILL = 2 
         if len(final_playlist_tracks) < actual_limit:
             needed = actual_limit - len(final_playlist_tracks)
-            logger.info(f"Playlist still short by {needed}. Fetching more mood/genre discovery tracks for padding...")
+            logger.info(f"Playlist still short by {needed}. Fetching more mood/genre discovery tracks for padding (with artist diversity)...")
             additional_discovery = []
-            fetch_limit_padding = needed * 10
+            fetch_limit_padding = needed * 10 
             for lib in libraries:
-                tracks = self._get_tracks_matching_mood_genre_style(lib, target_moods, target_styles, fetch_limit_padding)
-                for track in tracks:
+                tracks = self._get_tracks_matching_mood_genre_style(
+                    lib, 
+                    effective_target_moods,
+                    effective_target_styles,
+                    fetch_limit_padding
+                )
+                for track in tracks: 
                     additional_discovery.append(track)
             if additional_discovery:
                 unique_additional_discovery = list({t.ratingKey: t for t in additional_discovery if t.ratingKey not in processed_final_keys}.values())
                 filtered_additional_discovery = self._apply_common_filters(unique_additional_discovery, is_historical_track_list=False)
                 logger.info(f"Found {len(filtered_additional_discovery)} additional discovery tracks for padding (after filters & initial dedupe).")
-                
-                artist_counts_padding_fill = {}
-                added_padding_count = 0
-                random.shuffle(filtered_additional_discovery)
+                artist_counts_padding_fill = {}; added_padding_count = 0; random.shuffle(filtered_additional_discovery)
                 for pad_track in filtered_additional_discovery:
                     if len(final_playlist_tracks) >= actual_limit: break
                     if pad_track.ratingKey not in processed_final_keys:
                         artist_title = pad_track.grandparentTitle
                         if artist_counts_padding_fill.get(artist_title, 0) < MAX_TRACKS_PER_ARTIST_FOR_PADDING_FILL:
-                            final_playlist_tracks.append(pad_track)
-                            processed_final_keys.add(pad_track.ratingKey)
-                            artist_counts_padding_fill[artist_title] = artist_counts_padding_fill.get(artist_title, 0) + 1
-                            added_padding_count +=1
-                        else:
-                            logger.debug(f"Skipping padding track '{pad_track.title}' by '{artist_title}', artist limit reached for this fill stage.")
+                            final_playlist_tracks.append(pad_track); processed_final_keys.add(pad_track.ratingKey)
+                            artist_counts_padding_fill[artist_title] = artist_counts_padding_fill.get(artist_title, 0) + 1; added_padding_count +=1
+                        else: logger.debug(f"Skipping padding track '{pad_track.title}' by '{artist_title}', artist limit.")
                 logger.info(f"Added {added_padding_count} padding tracks. Playlist size: {len(final_playlist_tracks)}")
 
         # --- Final Deduplication, Sort, and Limit ---
