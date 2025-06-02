@@ -151,7 +151,28 @@ try:
     TIME_PLAYLIST_LEARNED_VIBE_TOP_M_STYLES = get_env_var("TIME_PLAYLIST_LEARNED_VIBE_TOP_M_STYLES", default=3, var_type=int)
     TIME_PLAYLIST_LEARNED_VIBE_MIN_OCCURRENCES = get_env_var("TIME_PLAYLIST_LEARNED_VIBE_MIN_OCCURRENCES", default=2, var_type=int)
 
-    
+    # Playlist Cover Generation Configuration
+    ENABLE_PLAYLIST_COVERS = get_env_var("ENABLE_PLAYLIST_COVERS", default=True, var_type=bool)
+    # Font path within the container. We'll need to add a font file.
+    # Default to a common system font path as a fallback, but ideally user provides one via volume mount or we bundle one.
+    # For now, let's assume we'll bundle one.
+    COVER_FONT_FILE_PATH = get_env_var("COVER_FONT_FILE_PATH", default="/app/harmoniq/fonts/DejaVuSans-Bold.ttf") # Example path
+    COVER_OUTPUT_PATH = get_env_var("COVER_OUTPUT_PATH", default="/tmp/harmoniq_cover.png") # Temporary path for generated image
+    # Define base colors for periods (can be expanded) - RGB tuples
+    # These are just examples, can be made more sophisticated
+    COVER_PERIOD_COLORS = {
+        "EarlyMorning": ((60, 70, 100), (100, 120, 160)), # Dark blues / purples
+        "Morning": ((100, 150, 200), (180, 210, 230)),   # Lighter blues / Sky
+        "Midday": ((255, 200, 100), (255, 160, 80)),     # Oranges / Yellows
+        "Afternoon": ((255, 120, 80), (220, 80, 60)),    # Reds / Oranges
+        "Evening": ((80, 60, 110), (140, 100, 160)),     # Purples / Dark Blues
+        "LateNight": ((30, 30, 60), (70, 70, 100)),       # Very Dark Blues / Indigos
+        "DefaultVibe": ((100, 100, 100), (150, 150, 150)) # Greys
+    }
+    # Allow user to override these via a structured env var if desired later, e.g.,
+    # COVER_COLOR_OVERRIDES="Morning=#RRGGBB,#RRGGBB;Evening=#RRGGBB,#RRGGBB"
+    # For now, use internal defaults.
+
     # Logging Level
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
 
@@ -178,6 +199,9 @@ try:
             logger.warning("TIME_PLAYLIST_TARGET_HISTORY_COUNT must be positive. Setting to 1 if history inclusion is enabled.")
             if TIME_PLAYLIST_INCLUDE_HISTORY_TRACKS: TIME_PLAYLIST_TARGET_HISTORY_COUNT = 1 # Ensure at least 1 if enabled
             else: TIME_PLAYLIST_TARGET_HISTORY_COUNT = 0
+
+    if ENABLE_PLAYLIST_COVERS and not os.path.exists(COVER_FONT_FILE_PATH) and COVER_FONT_FILE_PATH == "/app/harmoniq/fonts/DejaVuSans-Bold.ttf":
+        logger.warning(f"Playlist covers enabled, but default font at '{COVER_FONT_FILE_PATH}' might not exist. Consider bundling a font or setting COVER_FONT_FILE_PATH.")
 
     logger.info("Configuration loaded successfully.")
 

@@ -3,3 +3,4 @@ requests
 PlexAPI
 pytz
 schedule
+Pillow
