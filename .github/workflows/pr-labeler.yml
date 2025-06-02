@@ -1,35 +1,19 @@
 name: PR Labeler
-
 on:
-  # Run on all pull request events
-  pull_request_target: # Use pull_request_target for actions that modify PRs (like adding labels)
-    types: [opened, synchronize, reopened]
-    # synchronize: when new commits are pushed to the PR's branch
-    # opened: when a PR is opened
-    # reopened: when a PR is reopened
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
 
 jobs:
-  label:
-    name: Auto-Label PR
-    runs-on: ubuntu-latest
+  pr-labeler:
     permissions:
-      contents: read      # To read labeler.yml config file
-      pull-requests: write # IMPORTANT: To write labels to the PR
-
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository Config
-        uses: actions/checkout@v4
+      - uses: TimonVS/pr-labeler-action@v5
         with:
-          # We only need the .github/labeler.yml file from the base branch for this action
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }} # Check out PR branch to get its version of labeler.yml if it changes
-
-      - name: Run PR Labeler
-        uses: actions/labeler@v5 # Use latest v5
-        with:
-          # The GITHUB_TOKEN is automatically provided by Actions
-          # repo-token: "${{ secrets.GITHUB_TOKEN }}" # This is the default, so not strictly needed
-          # Path to the configuration file (optional, defaults to .github/labeler.yml)
-          configuration-path: .github/labeler.yml
-          # Set to true to enable syncing labels (remove labels if files are no longer matched)
-          sync-labels: false # Set to true if you want labels to be removed if a PR changes and no longer matches
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/pr-labeler.yml

@@ -1,0 +1,8 @@
+feature: ['feature/*', 'feat/*', enhancement/*']
+bugfix: ['fix/*', 'bugfix/*']
+refactor: refactor/*
+maintenance: ['ci/*', 'maintenance/*']
+chore: chore/*
+breaking-change: breaking/*
+documentation: doc/*
+dependencies: dependencies/*
