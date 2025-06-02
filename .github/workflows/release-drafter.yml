@@ -19,8 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     # Only run this job if the push is to one of the specified branches,
     # AND it's not a PR merge from a dependabot branch (to avoid draft churn for dep updates)
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')) || \
-        (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true && !startsWith(github.head_ref, 'dependabot/'))
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')) || (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true && !startsWith(github.head_ref, 'dependabot/'))
 
     steps:
       # This step checks out the repository, though release-drafter primarily uses the GitHub API.
