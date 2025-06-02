@@ -4,3 +4,4 @@ PlexAPI
 pytz
 schedule
 Pillow
+PyYAML

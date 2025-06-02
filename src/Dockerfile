@@ -22,5 +22,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY ./harmoniq /app/harmoniq
 
+# --- Create config directory ---
+RUN mkdir -p /app/config
+
+COPY ./config.yaml.example /app/config/config.yaml
+
 # Set the command to run the application
 CMD ["python", "-m", "harmoniq.scheduler_main"]
