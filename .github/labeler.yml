@@ -1,0 +1,39 @@
+# .github/labeler.yml
+
+feature:
+  - feature/*
+  - feat/*
+  - enhancement/*
+
+bugfix:
+  - bugfix/*
+  - fix/*
+  - bug/*
+
+refactor:
+  - refactor/*
+
+
+maintenance:
+  - maintenance/*
+
+chore:
+  - chore/*
+
+breaking:
+  - breaking/*
+
+# Add 'documentation' label for changes to Markdown files or specific docs folders
+documentation:
+  - doc/*
+  - '*.md' # Any markdown file in the root
+  - docs/**/* # Any file in a 'docs' folder
+
+# Add 'ci' label for changes to GitHub Actions workflows
+ci:
+  - ci/*
+  - .github/workflows/*
+
+# Add 'dependencies' label for changes to requirements or Docker base image
+dependencies:
+  - dependencies/*
