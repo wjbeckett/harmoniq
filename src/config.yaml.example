@@ -18,7 +18,8 @@ timezone: "UTC"
 # --- Feature Flags ---
 features:
   enable_time_playlist: true
-  enable_library_grower: false
+  enable_lastfm_recs: true
+  enable_lastfm_charts: true
   # For "Harmoniq Flow" (Time Playlist) specific features:
   time_playlist:
     learn_from_history: true
@@ -61,39 +62,14 @@ playlists:
       top_m_styles: 3   # How many top styles/genres from history
       min_occurrences: 2 # Min times a mood/style must appear to be "dominant"
 
-library_grower:
-  run_interval_hours: 24 # How often the Library Grower job runs
-  # Last.fm Source Parameters
-  top_artists_count: 30
-  top_artists_period: "6month" # overall, 12month, 6month, 3month, 1month, 7day
-  similar_artists_per_top_artist: 3
-  albums_per_similar_artist: 2
-  # Album Filtering
-  # For more accurate filtering, MusicBrainz integration is recommended (see prefer_musicbrainz_for_typing)
-  exclude_album_tags: # Case-insensitive Last.fm tags indicating non-studio/undesired albums
-    - "live"
-    - "compilation"
-    - "greatest hits"
-    - "best of"
-    - "ep"        # Can be broad, MusicBrainz primary_type is better
-    - "single"    # Can be broad, MusicBrainz primary_type is better
-    - "interview"
-    - "remix album" # Differentiate from "remix" track tag
-    - "bootleg"
-    - "soundtrack" # User might want some soundtracks, but often not for general artist discog
-  musicbrainz_filter: # Settings for using MusicBrainz for album typing
-    prefer_musicbrainz_for_typing: true # If true and MB client setup, use MB types
-    exclude_primary_types: ["ep", "single", "broadcast"] # MusicBrainz primary types to exclude
-    exclude_secondary_types: ["live", "compilation", "remix", "dj-mix", "interview", "soundtrack", "demo"] # MB secondary types
-
-lidarr:
-  url: "http://your-lidarr-ip:8686" # Prefer .env for actual value
-  api_key: "YOUR_LIDARR_API_KEY"  # Prefer .env for actual value
-  root_folder_path: "/music" # EXACTLY as configured in Lidarr's UI (Settings > Media Management > Root Folders)
-  quality_profile_id: 1      # Get from Lidarr > Settings > Profiles > Quality Profiles (ID is in URL or API)
-  metadata_profile_id: 1     # Get from Lidarr > Settings > Profiles > Metadata Profiles (ID is in URL or API)
-  add_album_monitored: true
-  search_for_album_on_add: true
+  # Last.fm Derived Recommendations
+  lastfm_recs:
+    name: "Last.fm Discovery"
+    size: 30
+  # Last.fm Charts
+  lastfm_charts:
+    name: "Last.fm Global Charts"
+    size: 50
 
 # --- Harmoniq Flow: Period Definitions ---
 # Define your named day parts and their START HOUR (0-23).
