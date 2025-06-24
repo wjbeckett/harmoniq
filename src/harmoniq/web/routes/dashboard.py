@@ -19,17 +19,17 @@ router = APIRouter()
 
 @router.get("/overview")
 async def get_dashboard_overview() -> Dict[str, Any]:
-    """Get overview data for the main dashboard with real data."""
+    """Get overview data for the main dashboard with proper service counting."""
     try:
-        # Get real stats
+        # Get real stats and service status
         stats_tracker = get_stats_tracker()
         uptime = stats_tracker.get_system_uptime()
 
         # Get current active period
         active_period = get_active_period_details()
 
-        # Calculate next update time
-        next_update = None
+        # Calculate next update time properly
+        next_update = "Unknown"
         if config.ENABLE_TIME_PLAYLIST and config.SCHEDULED_PERIODS:
             try:
                 import pytz
@@ -38,32 +38,72 @@ async def get_dashboard_overview() -> Dict[str, Any]:
                 now = datetime.now(tz)
                 current_hour = now.hour
 
+                # Sort periods by start hour
+                sorted_periods = sorted(
+                    config.SCHEDULED_PERIODS, key=lambda p: p.get("start_hour", 0)
+                )
+
                 # Find next period
-                next_hour = None
-                for period in config.SCHEDULED_PERIODS:
+                next_period = None
+                for period in sorted_periods:
                     start_hour = period.get("start_hour", 0)
                     if start_hour > current_hour:
-                        next_hour = start_hour
+                        next_period = period
                         break
 
-                if next_hour is None and config.SCHEDULED_PERIODS:
-                    # Next update is tomorrow at first period
-                    first_period = min(
-                        config.SCHEDULED_PERIODS, key=lambda p: p.get("start_hour", 0)
-                    )
-                    next_hour = first_period.get("start_hour", 0)
+                if next_period:
+                    # Next period is today
                     next_time = now.replace(
-                        hour=next_hour, minute=0, second=0, microsecond=0
-                    ) + timedelta(days=1)
+                        hour=next_period["start_hour"],
+                        minute=0,
+                        second=0,
+                        microsecond=0,
+                    )
+                    next_update = next_time.strftime("%H:%M %Z")
                 else:
+                    # Next period is tomorrow (first period of the day)
+                    first_period = sorted_periods[0]
                     next_time = now.replace(
-                        hour=next_hour, minute=0, second=0, microsecond=0
-                    )
+                        hour=first_period["start_hour"],
+                        minute=0,
+                        second=0,
+                        microsecond=0,
+                    ) + timedelta(days=1)
+                    next_update = f"Tomorrow {next_time.strftime('%H:%M %Z')}"
 
-                next_update = next_time.strftime("%H:%M %Z")
             except Exception as e:
                 logger.error(f"Error calculating next update: {e}")
                 next_update = "Unknown"
+
+        # Get service status and count properly
+        from .status import (
+            test_plex_connection,
+            test_lastfm_connection,
+            test_lidarr_connection,
+        )
+
+        # Test services
+        plex_status = await test_plex_connection()
+        lastfm_status = await test_lastfm_connection()
+        lidarr_status = await test_lidarr_connection()
+
+        # Count connected services
+        connected_count = 0
+        total_count = 3
+
+        if plex_status.get("status") == "connected":
+            connected_count += 1
+        if lastfm_status.get("status") == "connected":
+            connected_count += 1
+        if lidarr_status.get("status") == "connected":
+            connected_count += 1
+
+        # Determine overall system status
+        system_status = "healthy"
+        if connected_count == 0:
+            system_status = "critical"
+        elif connected_count < total_count:
+            system_status = "issues"
 
         # Harmoniq Flow status with real data
         flow_status = {
@@ -80,7 +120,7 @@ async def get_dashboard_overview() -> Dict[str, Any]:
         library_grower_status = {
             "enabled": config.ENABLE_LIBRARY_GROWER,
             "next_run": (
-                f"{config.LIBRARY_GROWER_RUN_INTERVAL_HOURS} hours"
+                f"Every {config.LIBRARY_GROWER_RUN_INTERVAL_HOURS} hours"
                 if config.ENABLE_LIBRARY_GROWER
                 else "Disabled"
             ),
@@ -91,48 +131,65 @@ async def get_dashboard_overview() -> Dict[str, Any]:
                 else None
             ),
             "albums_added_today": 0,  # TODO: Get from daily stats
-            "total_albums_added": 0,  # TODO: Get from stats
+            "total_albums_added": stats_tracker._reload_fresh_stats()
+            .get("library_grower", {})
+            .get("total_albums", 0),
         }
 
-        # System status with real uptime
-        system_status = {
+        # System status with proper counting
+        system_info = {
+            "status": system_status,
             "uptime": f"{uptime['session_days']} days, {uptime['session_hours']} hours",
             "last_error": None,  # TODO: Get from logs
             "services_connected": {
-                "plex": (
-                    "connected"
-                    if config.PLEX_URL and config.PLEX_TOKEN
-                    else "not_configured"
-                ),
-                "lastfm": (
-                    "connected"
-                    if config.LASTFM_API_KEY and config.LASTFM_USER
-                    else "not_configured"
-                ),
-                "lidarr": (
-                    "connected"
-                    if config.ENABLE_LIBRARY_GROWER
-                    and config.LIDARR_URL
-                    and config.LIDARR_API_KEY
-                    else (
-                        "disabled"
-                        if not config.ENABLE_LIBRARY_GROWER
-                        else "not_configured"
-                    )
-                ),
+                "plex": plex_status.get("status", "unknown"),
+                "lastfm": lastfm_status.get("status", "unknown"),
+                "lidarr": lidarr_status.get("status", "unknown"),
             },
+            "connected_count": connected_count,
+            "total_count": total_count,
         }
 
         return {
             "harmoniq_flow": flow_status,
             "library_grower": library_grower_status,
-            "system": system_status,
+            "system": system_info,
             "timestamp": datetime.now().isoformat(),
         }
 
     except Exception as e:
         logger.error(f"Dashboard overview error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get dashboard overview")
+        # Return safe fallback data
+        return {
+            "harmoniq_flow": {
+                "enabled": config.ENABLE_TIME_PLAYLIST if config else False,
+                "active_period": "Unknown",
+                "next_update": "Unknown",
+                "last_update": None,
+                "total_periods": 0,
+            },
+            "library_grower": {
+                "enabled": config.ENABLE_LIBRARY_GROWER if config else False,
+                "next_run": "Unknown",
+                "last_run": None,
+                "interval_hours": None,
+                "albums_added_today": 0,
+                "total_albums_added": 0,
+            },
+            "system": {
+                "status": "error",
+                "uptime": "Unknown",
+                "last_error": str(e),
+                "services_connected": {
+                    "plex": "unknown",
+                    "lastfm": "unknown",
+                    "lidarr": "unknown",
+                },
+                "connected_count": 0,
+                "total_count": 3,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
 @router.get("/recent-activity")
