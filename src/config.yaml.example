@@ -18,8 +18,6 @@ timezone: "UTC"
 # --- Feature Flags ---
 features:
   enable_time_playlist: true
-  enable_lastfm_recs: true
-  enable_lastfm_charts: true
   # For "Harmoniq Flow" (Time Playlist) specific features:
   time_playlist:
     learn_from_history: true
@@ -61,15 +59,6 @@ playlists:
       top_n_moods: 3    # How many top moods from history to consider
       top_m_styles: 3   # How many top styles/genres from history
       min_occurrences: 2 # Min times a mood/style must appear to be "dominant"
-
-  # Last.fm Derived Recommendations
-  lastfm_recs:
-    name: "Last.fm Discovery"
-    size: 30
-  # Last.fm Charts
-  lastfm_charts:
-    name: "Last.fm Global Charts"
-    size: 50
 
 # --- Harmoniq Flow: Period Definitions ---
 # Define your named day parts and their START HOUR (0-23).
