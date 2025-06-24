@@ -16,6 +16,7 @@ uvicorn[standard]
 jinja2
 python-multipart
 aiofiles
+aiohttp
 
 # Optional: For better performance
 orjson
