@@ -235,6 +235,356 @@ def run_harmoniq_flow_update(
         logger.info("No active time period. 'Harmoniq Flow' playlist not updated.")
 
 
+# --- Function to run the Library Grower cycle ---
+def run_library_grower_cycle():
+    """
+    Main Library Grower cycle: Fetch top artists from Last.fm, find similar artists,
+    get their albums, filter by type, and add suitable ones to Lidarr.
+    """
+    if not config.ENABLE_LIBRARY_GROWER:
+        logger.info("Library Grower is disabled. Skipping cycle.")
+        return
+
+    logger.info("Starting Library Grower cycle...")
+
+    # Initialize clients
+    try:
+        from .lastfm_client import LastfmClient
+        from .lidarr_client import LidarrClient
+        from .musicbrainz_client import MusicBrainzClient
+
+        # Check required config
+        if not all([config.LASTFM_API_KEY, config.LASTFM_USER]):
+            logger.error(
+                "Library Grower: Last.fm API key or username not configured. Aborting."
+            )
+            return
+
+        if not all(
+            [config.LIDARR_URL, config.LIDARR_API_KEY, config.LIDARR_ROOT_FOLDER_PATH]
+        ):
+            logger.error("Library Grower: Lidarr configuration incomplete. Aborting.")
+            return
+
+        # Initialize clients
+        lastfm_client = LastfmClient(config.LASTFM_API_KEY, config.LASTFM_USER)
+        lidarr_client = LidarrClient(config.LIDARR_URL, config.LIDARR_API_KEY)
+        musicbrainz_client = (
+            MusicBrainzClient()
+            if config.LIBRARY_GROWER_PREFER_MUSICBRAINZ_FILTER
+            else None
+        )
+
+        # Test connections
+        if not lidarr_client.test_connection():
+            logger.error("Library Grower: Failed to connect to Lidarr. Aborting.")
+            return
+
+        logger.info("Library Grower: All clients initialized successfully.")
+
+    except Exception as e:
+        logger.error(f"Library Grower: Failed to initialize clients: {e}")
+        return
+
+    # Statistics tracking
+    stats = {
+        "top_artists_fetched": 0,
+        "similar_artists_found": 0,
+        "albums_considered": 0,
+        "albums_filtered_by_tags": 0,
+        "albums_filtered_by_mb_type": 0,
+        "albums_already_in_lidarr": 0,
+        "albums_added_to_lidarr": 0,
+        "albums_failed_to_add": 0,
+    }
+
+    try:
+        # Step 1: Get user's top artists from Last.fm
+        logger.info(
+            f"Fetching top {config.LIBRARY_GROWER_TOP_ARTISTS_COUNT} artists for user '{config.LASTFM_USER}' (period: {config.LIBRARY_GROWER_TOP_ARTISTS_PERIOD})"
+        )
+
+        top_artists = lastfm_client.get_user_top_artists(
+            period=config.LIBRARY_GROWER_TOP_ARTISTS_PERIOD,
+            limit=config.LIBRARY_GROWER_TOP_ARTISTS_COUNT,
+        )
+
+        if not top_artists:
+            logger.warning("Library Grower: No top artists found. Aborting cycle.")
+            return
+
+        stats["top_artists_fetched"] = len(top_artists)
+        logger.info(f"Library Grower: Found {len(top_artists)} top artists")
+
+        # Step 2: Get similar artists for each top artist
+        all_similar_artists = set()  # Use set to avoid duplicates
+
+        for i, top_artist in enumerate(top_artists):
+            artist_name = top_artist.get("name", "")
+            artist_mbid = top_artist.get("mbid", "")
+            logger.debug(
+                f"Processing top artist {i+1}/{len(top_artists)}: {artist_name}"
+            )
+
+            # Use MBID if available, otherwise use name
+            similar_artists = lastfm_client.get_similar_artists(
+                artist_name=artist_name if not artist_mbid else None,
+                artist_mbid=artist_mbid if artist_mbid else None,
+                limit=config.LIBRARY_GROWER_SIMILAR_ARTISTS_PER_TOP_ARTIST,
+            )
+
+            if similar_artists:
+                for similar_artist in similar_artists:
+                    similar_name = similar_artist.get("name", "").strip()
+                    similar_mbid = similar_artist.get("mbid", "").strip()
+                    if similar_name:
+                        # Store both name and MBID for later use
+                        all_similar_artists.add((similar_name, similar_mbid))
+
+        stats["similar_artists_found"] = len(all_similar_artists)
+        logger.info(
+            f"Library Grower: Found {len(all_similar_artists)} unique similar artists"
+        )
+
+        if not all_similar_artists:
+            logger.warning("Library Grower: No similar artists found. Aborting cycle.")
+            return
+
+        # Step 3: Get top albums for each similar artist
+        candidate_albums = []
+
+        for i, (artist_name, artist_mbid) in enumerate(all_similar_artists):
+            logger.debug(
+                f"Getting albums for similar artist {i+1}/{len(all_similar_artists)}: {artist_name}"
+            )
+
+            # Use MBID if available, otherwise use name
+            artist_albums = lastfm_client.get_artist_top_albums(
+                artist_name=artist_name if not artist_mbid else None,
+                artist_mbid=artist_mbid if artist_mbid else None,
+                limit=config.LIBRARY_GROWER_ALBUMS_PER_SIMILAR_ARTIST,
+            )
+
+            if artist_albums:
+                for album in artist_albums:
+                    album_name = album.get("name", "").strip()
+                    album_mbid = album.get("mbid", "").strip()
+                    if album_name:
+                        candidate_albums.append(
+                            {
+                                "artist_name": artist_name,
+                                "album_name": album_name,
+                                "album_mbid": album_mbid,
+                                "lastfm_data": album,
+                            }
+                        )
+
+        stats["albums_considered"] = len(candidate_albums)
+        logger.info(f"Library Grower: Found {len(candidate_albums)} candidate albums")
+
+        if not candidate_albums:
+            logger.warning("Library Grower: No candidate albums found. Aborting cycle.")
+            return
+
+        # Step 4: Filter and process albums
+        albums_to_add = []
+
+        for i, album_info in enumerate(candidate_albums):
+            artist_name = album_info["artist_name"]
+            album_name = album_info["album_name"]
+            album_mbid = album_info["album_mbid"]
+            lastfm_album_data = album_info["lastfm_data"]
+
+            logger.debug(
+                f"Processing album {i+1}/{len(candidate_albums)}: '{album_name}' by {artist_name}"
+            )
+
+            # Get detailed album info from Last.fm (including MBID and tags)
+            # Use MBID if we have it, otherwise use artist/album names
+            if album_mbid:
+                detailed_album_info = lastfm_client.get_album_info(
+                    artist_name=artist_name, album_name=album_name, mbid=album_mbid
+                )
+            else:
+                detailed_album_info = lastfm_client.get_album_info(
+                    artist_name=artist_name, album_name=album_name
+                )
+
+            if not detailed_album_info:
+                logger.debug(
+                    f"Could not get detailed info for '{album_name}' by {artist_name}"
+                )
+                continue
+
+            # Extract MBID and tags from detailed info
+            final_album_mbid = detailed_album_info.get("mbid", "").strip()
+            if not final_album_mbid:
+                final_album_mbid = album_mbid  # Fall back to the one from top albums
+
+            # Extract tags - they're nested under tags.tag
+            album_tags = []
+            tags_data = detailed_album_info.get("tags", {})
+            if isinstance(tags_data, dict) and "tag" in tags_data:
+                raw_tags = tags_data["tag"]
+                if isinstance(raw_tags, list):
+                    album_tags = raw_tags
+                elif isinstance(raw_tags, dict):
+                    album_tags = [raw_tags]  # Single tag case
+
+            # Filter by Last.fm tags first (basic filtering)
+            if album_tags and config.LIBRARY_GROWER_EXCLUDE_ALBUM_TAGS:
+                tag_names = [
+                    tag.get("name", "").lower()
+                    for tag in album_tags
+                    if isinstance(tag, dict)
+                ]
+                excluded_tags = [
+                    tag.lower().strip()
+                    for tag in config.LIBRARY_GROWER_EXCLUDE_ALBUM_TAGS
+                ]
+
+                if any(excluded_tag in tag_names for excluded_tag in excluded_tags):
+                    logger.debug(
+                        f"Album '{album_name}' filtered out by Last.fm tags: {tag_names}"
+                    )
+                    stats["albums_filtered_by_tags"] += 1
+                    continue
+
+            # Filter by MusicBrainz type if enabled and MBID available
+            if musicbrainz_client and final_album_mbid:
+                try:
+                    # Convert Release MBID to Release Group MBID if needed
+                    release_group_mbid = final_album_mbid
+                    if len(final_album_mbid) == 36:  # Standard MBID format
+                        # Try to get release group MBID (in case we got a release MBID)
+                        rg_mbid = (
+                            musicbrainz_client.get_release_group_mbid_from_album_mbid(
+                                final_album_mbid
+                            )
+                        )
+                        if rg_mbid:
+                            release_group_mbid = rg_mbid
+
+                    # Get album type information
+                    album_type_info = (
+                        musicbrainz_client.get_album_type_by_release_group_mbid(
+                            release_group_mbid
+                        )
+                    )
+
+                    if album_type_info:
+                        if not album_type_info.get("is_studio_album", False):
+                            logger.debug(
+                                f"Album '{album_name}' filtered out by MusicBrainz type: "
+                                f"primary={album_type_info.get('primary_type')}, "
+                                f"secondary={album_type_info.get('secondary_types')}"
+                            )
+                            stats["albums_filtered_by_mb_type"] += 1
+                            continue
+                        else:
+                            logger.debug(
+                                f"Album '{album_name}' passed MusicBrainz filter as studio album"
+                            )
+                    else:
+                        logger.debug(
+                            f"Could not get MusicBrainz type info for '{album_name}' (MBID: {release_group_mbid})"
+                        )
+                        # Continue without MusicBrainz filtering if we can't get the info
+
+                except Exception as e:
+                    logger.warning(
+                        f"Error checking MusicBrainz type for '{album_name}': {e}"
+                    )
+                    # Continue without MusicBrainz filtering on error
+
+            # Check if album already exists in Lidarr
+            if final_album_mbid:
+                try:
+                    if lidarr_client.album_exists_in_library(final_album_mbid):
+                        logger.debug(f"Album '{album_name}' already exists in Lidarr")
+                        stats["albums_already_in_lidarr"] += 1
+                        continue
+                except Exception as e:
+                    logger.warning(f"Error checking if album exists in Lidarr: {e}")
+                    # Continue to try adding it
+
+            # Album passed all filters - add to list for Lidarr
+            albums_to_add.append(
+                {
+                    "artist_name": artist_name,
+                    "album_name": album_name,
+                    "mbid": final_album_mbid,
+                    "detailed_info": detailed_album_info,
+                }
+            )
+
+        logger.info(
+            f"Library Grower: {len(albums_to_add)} albums passed filtering and will be added to Lidarr"
+        )
+
+        # Step 5: Add albums to Lidarr
+        for album_to_add in albums_to_add:
+            artist_name = album_to_add["artist_name"]
+            album_name = album_to_add["album_name"]
+            album_mbid = album_to_add["mbid"]
+
+            if not album_mbid:
+                logger.warning(
+                    f"No MBID for '{album_name}' by {artist_name}, skipping Lidarr add"
+                )
+                stats["albums_failed_to_add"] += 1
+                continue
+
+            try:
+                logger.info(
+                    f"Adding to Lidarr: '{album_name}' by {artist_name} (MBID: {album_mbid})"
+                )
+
+                result = lidarr_client.add_album_by_mbid(
+                    release_group_mbid=album_mbid,
+                    root_folder_path=config.LIDARR_ROOT_FOLDER_PATH,
+                    quality_profile_id=config.LIDARR_QUALITY_PROFILE_ID,
+                    metadata_profile_id=config.LIDARR_METADATA_PROFILE_ID,
+                    monitored=config.LIDARR_ADD_ALBUM_MONITORED,
+                    search_on_add=config.LIDARR_SEARCH_FOR_ALBUM_ON_ADD,
+                )
+
+                if result:
+                    logger.info(
+                        f"Successfully added '{album_name}' by {artist_name} to Lidarr"
+                    )
+                    stats["albums_added_to_lidarr"] += 1
+                else:
+                    logger.warning(
+                        f"Failed to add '{album_name}' by {artist_name} to Lidarr"
+                    )
+                    stats["albums_failed_to_add"] += 1
+
+            except Exception as e:
+                logger.error(
+                    f"Error adding '{album_name}' by {artist_name} to Lidarr: {e}"
+                )
+                stats["albums_failed_to_add"] += 1
+
+        # Log final statistics
+        logger.info("Library Grower cycle completed. Statistics:")
+        logger.info(f"  Top artists fetched: {stats['top_artists_fetched']}")
+        logger.info(f"  Similar artists found: {stats['similar_artists_found']}")
+        logger.info(f"  Albums considered: {stats['albums_considered']}")
+        logger.info(f"  Albums filtered by tags: {stats['albums_filtered_by_tags']}")
+        logger.info(
+            f"  Albums filtered by MusicBrainz type: {stats['albums_filtered_by_mb_type']}"
+        )
+        logger.info(f"  Albums already in Lidarr: {stats['albums_already_in_lidarr']}")
+        logger.info(
+            f"  Albums successfully added to Lidarr: {stats['albums_added_to_lidarr']}"
+        )
+        logger.info(f"  Albums failed to add: {stats['albums_failed_to_add']}")
+
+    except Exception as e:
+        logger.exception(f"Library Grower: Unexpected error during cycle: {e}")
+
+
 # --- Combined function for single run (useful for if __name__ == "__main__") ---
 def run_all_updates_once():
     logger.info("Starting all playlist update cycles (single run)...")

@@ -4,7 +4,11 @@ import time
 import signal
 import logging
 
-from .main import run_harmoniq_flow_update, get_active_period_details
+from .main import (
+    run_harmoniq_flow_update,
+    get_active_period_details,
+    run_library_grower_cycle,
+)
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
 from . import config
@@ -109,6 +113,21 @@ def harmoniq_flow_job_wrapper(
     )
 
 
+def library_grower_job_wrapper():
+    """Wrapper function for the Library Grower scheduled job."""
+    logger.info("Scheduler: Triggered Library Grower cycle job.")
+
+    if not config.ENABLE_LIBRARY_GROWER:
+        logger.info("Scheduler: Library Grower is disabled, skipping job.")
+        return
+
+    try:
+        run_library_grower_cycle()
+        logger.info("Scheduler: Library Grower cycle job completed successfully.")
+    except Exception as e:
+        logger.exception(f"Scheduler: Error during Library Grower job execution: {e}")
+
+
 if __name__ == "__main__":
     logger.info("Harmoniq Multi-Job Scheduler starting...")
     initialize_global_clients_and_libs()
@@ -141,6 +160,14 @@ if __name__ == "__main__":
     else:
         logger.info("Harmoniq Flow playlist updates are disabled.")
 
+    # --- Schedule Library Grower Updates ---
+    if config.ENABLE_LIBRARY_GROWER:
+        interval_hours = config.LIBRARY_GROWER_RUN_INTERVAL_HOURS
+        logger.info(f"Scheduling Library Grower to run every {interval_hours} hours.")
+        schedule.every(interval_hours).hours.do(library_grower_job_wrapper)
+    else:
+        logger.info("Library Grower is disabled.")
+
     # --- Initial Run of Jobs ---
     logger.info("Performing initial run of jobs at startup...")
     if config.ENABLE_TIME_PLAYLIST:
@@ -155,6 +182,9 @@ if __name__ == "__main__":
             logger.warning(
                 "Initial run: No active period found for Harmoniq Flow, skipping."
             )
+    if config.ENABLE_LIBRARY_GROWER:
+        logger.info("Initial run: Library Grower cycle...")
+        library_grower_job_wrapper()
     logger.info("Initial job runs complete. Waiting for scheduled runs...")
 
     # --- Main Scheduler Loop (remains the same) ---

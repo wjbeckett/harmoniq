@@ -5,3 +5,4 @@ pytz
 schedule
 Pillow
 PyYAML
+musicbrainzngs
