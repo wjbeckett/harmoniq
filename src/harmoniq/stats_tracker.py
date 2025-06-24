@@ -2,6 +2,7 @@
 Real-time statistics tracking for Harmoniq web dashboard.
 Tracks actual system events and provides real data to the web UI.
 Uses /app/config/ directory which is mapped to host appdata.
+FIXED: Always reloads fresh data from disk for web API calls.
 """
 
 import json
@@ -46,6 +47,18 @@ class HarmoniqStatsTracker:
             "activity_log": [],
             "daily_stats": {},
         }
+
+    def _reload_fresh_stats(self) -> Dict:
+        """ALWAYS reload fresh stats from disk - for web API calls."""
+        try:
+            if os.path.exists(self.stats_file):
+                with open(self.stats_file, "r") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not reload stats file: {e}")
+
+        # Return cached stats if file read fails
+        return self.stats
 
     def _save_stats(self):
         """Save stats to file."""
@@ -106,6 +119,12 @@ class HarmoniqStatsTracker:
                 )
             self._save_stats()
 
+    def record_activity(self, message: str, activity_type: str):
+        """Public method to record custom activity."""
+        with self.lock:
+            self._add_activity(message, activity_type)
+            self._save_stats()
+
     def _add_activity(self, message: str, activity_type: str):
         """Add an activity to the log."""
         activity = {
@@ -121,10 +140,12 @@ class HarmoniqStatsTracker:
             self.stats["activity_log"] = self.stats["activity_log"][:50]
 
     def get_system_uptime(self) -> Dict:
-        """Get system uptime information."""
+        """Get system uptime information with fresh data."""
+        fresh_stats = self._reload_fresh_stats()  # ✅ Always reload
+
         try:
-            start_time = datetime.fromisoformat(self.stats["system_start_time"])
-            restart_time = datetime.fromisoformat(self.stats["last_restart_time"])
+            start_time = datetime.fromisoformat(fresh_stats["system_start_time"])
+            restart_time = datetime.fromisoformat(fresh_stats["last_restart_time"])
             now = datetime.now()
 
             total_uptime = now - start_time
@@ -147,25 +168,27 @@ class HarmoniqStatsTracker:
             }
 
     def get_quick_stats(self) -> Dict:
-        """Get quick stats for dashboard."""
+        """Get quick stats for dashboard with FRESH data."""
+        fresh_stats = self._reload_fresh_stats()  # ✅ Always reload
         uptime = self.get_system_uptime()
 
         return {
-            "playlists_updated": self.stats.get("total_playlist_updates", 0),
-            "tracks_generated": self.stats.get("total_tracks_generated", 0),
-            "albums_discovered": self.stats.get("library_grower", {}).get(
+            "playlists_updated": fresh_stats.get("total_playlist_updates", 0),
+            "tracks_generated": fresh_stats.get("total_tracks_generated", 0),
+            "albums_discovered": fresh_stats.get("library_grower", {}).get(
                 "total_albums", 0
             ),
-            "artists_processed": self.stats.get("library_grower", {}).get(
+            "artists_processed": fresh_stats.get("library_grower", {}).get(
                 "total_artists", 0
             ),
             "days_online": max(uptime["total_days"], uptime["session_days"]),
-            "period_switches": self.stats.get("total_period_switches", 0),
+            "period_switches": fresh_stats.get("total_period_switches", 0),
         }
 
     def get_recent_activity(self, limit: int = 10) -> List[Dict]:
-        """Get recent activity for dashboard."""
-        activities = self.stats.get("activity_log", [])[:limit]
+        """Get recent activity for dashboard with FRESH data."""
+        fresh_stats = self._reload_fresh_stats()  # ✅ Always reload
+        activities = fresh_stats.get("activity_log", [])[:limit]
 
         # Add relative timestamps
         for activity in activities:
@@ -196,10 +219,12 @@ class HarmoniqStatsTracker:
         return activities
 
     def get_current_period_info(self) -> Dict:
-        """Get current period information."""
+        """Get current period information with FRESH data."""
+        fresh_stats = self._reload_fresh_stats()  # ✅ Always reload
+
         return {
-            "current_period": self.stats.get("current_period", "Unknown"),
-            "last_update": self.stats.get("last_update_time"),
+            "current_period": fresh_stats.get("current_period", "Unknown"),
+            "last_update": fresh_stats.get("last_update_time"),
             "total_periods": 6,  # From your config
         }
 
