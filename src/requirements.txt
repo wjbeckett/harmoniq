@@ -2,11 +2,13 @@
 
 # Core dependencies
 requests
-pyyaml
+PyYAML
 python-dotenv
 schedule
 plexapi
 musicbrainzngs
+pytz
+Pillow
 
 # Web UI dependencies
 fastapi
@@ -14,7 +16,6 @@ uvicorn[standard]
 jinja2
 python-multipart
 aiofiles
-pytz
 
 # Optional: For better performance
 orjson
