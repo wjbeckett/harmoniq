@@ -1,4 +1,9 @@
-# src/harmoniq/scheduler_main.py
+#!/usr/bin/env python3
+"""
+Harmoniq Scheduler Main - Enhanced for Web Integration
+Preserves all existing functionality while adding web UI support
+"""
+
 import schedule
 import time
 import signal
@@ -129,7 +134,9 @@ def library_grower_job_wrapper():
 
 
 if __name__ == "__main__":
-    logger.info("Harmoniq Multi-Job Scheduler starting...")
+    logger.info("🎵 Harmoniq Multi-Job Scheduler starting...")
+    logger.info("🌐 Web UI will be available at http://localhost:7845 (if web server is running)")
+
     initialize_global_clients_and_libs()
 
     # --- Schedule Harmoniq Flow Updates based on SCHEDULED_PERIODS ---
@@ -203,4 +210,4 @@ if __name__ == "__main__":
         if shutdown_event_triggered:
             break
         schedule.run_pending()
-    logger.info("Harmoniq Scheduler has been shut down.")
+    logger.info("🛑 Harmoniq Scheduler has been shut down.")

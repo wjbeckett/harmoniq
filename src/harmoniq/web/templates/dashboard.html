@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Harmoniq{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <!-- Header Section -->
+    <div class="dashboard-header">
+        <div class="header-content">
+            <h1 class="dashboard-title">
+                <i class="fas fa-tachometer-alt"></i>
+                Dashboard
+            </h1>
+            <p class="dashboard-subtitle">Monitor your music library automation</p>
+        </div>
+
+        <div class="header-actions">
+            <button class="btn btn-primary" onclick="refreshDashboard()">
+                <i class="fas fa-sync-alt"></i>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Status Cards -->
+    <div class="status-grid">
+        <!-- Harmoniq Flow Card -->
+        <div class="status-card flow-card">
+            <div class="card-header">
+                <div class="card-icon flow-icon">
+                    <i class="fas fa-stream"></i>
+                </div>
+                <div class="card-title">
+                    <h3>Harmoniq Flow</h3>
+                    <span class="card-status" id="flowStatus">Loading...</span>
+                </div>
+            </div>
+
+            <div class="card-content">
+                <div class="status-info">
+                    <div class="info-item">
+                        <span class="info-label">Active Period</span>
+                        <span class="info-value" id="activePeriod">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Next Update</span>
+                        <span class="info-value" id="nextUpdate">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Total Periods</span>
+                        <span class="info-value" id="totalPeriods">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Library Grower Card -->
+        <div class="status-card grower-card">
+            <div class="card-header">
+                <div class="card-icon grower-icon">
+                    <i class="fas fa-seedling"></i>
+                </div>
+                <div class="card-title">
+                    <h3>Library Grower</h3>
+                    <span class="card-status" id="growerStatus">Loading...</span>
+                </div>
+            </div>
+
+            <div class="card-content">
+                <div class="status-info">
+                    <div class="info-item">
+                        <span class="info-label">Next Run</span>
+                        <span class="info-value" id="nextRun">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Albums Today</span>
+                        <span class="info-value" id="albumsToday">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Total Added</span>
+                        <span class="info-value" id="totalAlbums">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status Card -->
+        <div class="status-card system-card">
+            <div class="card-header">
+                <div class="card-icon system-icon">
+                    <i class="fas fa-server"></i>
+                </div>
+                <div class="card-title">
+                    <h3>System Status</h3>
+                    <span class="card-status" id="systemStatus">Loading...</span>
+                </div>
+            </div>
+
+            <div class="card-content">
+                <div class="status-info">
+                    <div class="info-item">
+                        <span class="info-label">Uptime</span>
+                        <span class="info-value" id="uptime">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Services</span>
+                        <span class="info-value" id="servicesStatus">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Last Error</span>
+                        <span class="info-value" id="lastError">None</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Stats Card -->
+        <div class="status-card stats-card">
+            <div class="card-header">
+                <div class="card-icon stats-icon">
+                    <i class="fas fa-chart-line"></i>
+                </div>
+                <div class="card-title">
+                    <h3>Quick Stats</h3>
+                    <span class="card-status">Overview</span>
+                </div>
+            </div>
+
+            <div class="card-content">
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number" id="playlistsUpdated">-</div>
+                        <div class="stat-label">Playlists Updated</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="albumsDiscovered">-</div>
+                        <div class="stat-label">Albums Discovered</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="artistsProcessed">-</div>
+                        <div class="stat-label">Artists Processed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="uptimeDays">-</div>
+                        <div class="stat-label">Days Online</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Services Status Section -->
+    <div class="services-section">
+        <h2 class="section-title">
+            <i class="fas fa-plug"></i>
+            Connected Services
+        </h2>
+
+        <div class="services-grid">
+            <!-- Plex Service -->
+            <div class="service-card" id="plexService">
+                <div class="service-header">
+                    <div class="service-icon plex-icon">
+                        <i class="fas fa-play"></i>
+                    </div>
+                    <div class="service-info">
+                        <h4>Plex Media Server</h4>
+                        <span class="service-status" id="plexStatus">Checking...</span>
+                    </div>
+                </div>
+                <div class="service-details" id="plexDetails">
+                    <div class="detail-item">
+                        <span class="detail-label">Server</span>
+                        <span class="detail-value" id="plexServer">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Version</span>
+                        <span class="detail-value" id="plexVersion">-</span>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-outline test-btn" onclick="testService('plex')">
+                    <i class="fas fa-vial"></i>
+                    Test Connection
+                </button>
+            </div>
+
+            <!-- Last.fm Service -->
+            <div class="service-card" id="lastfmService">
+                <div class="service-header">
+                    <div class="service-icon lastfm-icon">
+                        <i class="fas fa-music"></i>
+                    </div>
+                    <div class="service-info">
+                        <h4>Last.fm</h4>
+                        <span class="service-status" id="lastfmStatus">Checking...</span>
+                    </div>
+                </div>
+                <div class="service-details" id="lastfmDetails">
+                    <div class="detail-item">
+                        <span class="detail-label">Username</span>
+                        <span class="detail-value" id="lastfmUser">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">API Status</span>
+                        <span class="detail-value" id="lastfmApi">-</span>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-outline test-btn" onclick="testService('lastfm')">
+                    <i class="fas fa-vial"></i>
+                    Test Connection
+                </button>
+            </div>
+
+            <!-- Lidarr Service -->
+            <div class="service-card" id="lidarrService">
+                <div class="service-header">
+                    <div class="service-icon lidarr-icon">
+                        <i class="fas fa-download"></i>
+                    </div>
+                    <div class="service-info">
+                        <h4>Lidarr</h4>
+                        <span class="service-status" id="lidarrStatus">Checking...</span>
+                    </div>
+                </div>
+                <div class="service-details" id="lidarrDetails">
+                    <div class="detail-item">
+                        <span class="detail-label">URL</span>
+                        <span class="detail-value" id="lidarrUrl">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Connection</span>
+                        <span class="detail-value" id="lidarrConnection">-</span>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-outline test-btn" onclick="testService('lidarr')">
+                    <i class="fas fa-vial"></i>
+                    Test Connection
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity Section -->
+    <div class="activity-section">
+        <h2 class="section-title">
+            <i class="fas fa-history"></i>
+            Recent Activity
+        </h2>
+
+        <div class="activity-feed" id="activityFeed">
+            <div class="activity-loading">
+                <div class="spinner-sm"></div>
+                <span>Loading recent activity...</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/dashboard.js') }}"></script>
+{% endblock %}
