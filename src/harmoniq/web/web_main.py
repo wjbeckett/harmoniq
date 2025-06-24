@@ -10,8 +10,8 @@ import signal
 import logging
 from pathlib import Path
 
-from .web.app import create_app
-from .log_config import logger
+from .app import create_app
+from ..log_config import logger
 
 # Global shutdown flag
 shutdown_event = asyncio.Event()
