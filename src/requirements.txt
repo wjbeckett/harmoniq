@@ -1,7 +1,19 @@
-python-dotenv # For local .env loading
+# Harmoniq Requirements
+
+# Core dependencies
 requests
-PlexAPI
-pytz
+pyyaml
+python-dotenv
 schedule
-Pillow
-PyYAML
+plexapi
+musicbrainzngs
+
+# Web UI dependencies
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+aiofiles
+
+# Optional: For better performance
+orjson
