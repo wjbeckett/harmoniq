@@ -104,9 +104,8 @@ class HarmoniqDashboard {
         }
 
         if (nextUpdate) {
-            nextUpdate.textContent = data.harmoniq_flow.next_update 
-                ? window.utils.timeAgo(data.harmoniq_flow.next_update)
-                : 'Unknown';
+            // ✅ FIXED: Display the actual time string, not timeAgo
+            nextUpdate.textContent = data.harmoniq_flow.next_update || 'Unknown';
         }
 
         if (totalPeriods) {
@@ -125,9 +124,8 @@ class HarmoniqDashboard {
         }
 
         if (nextRun) {
-            nextRun.textContent = data.library_grower.next_run 
-                ? window.utils.timeAgo(data.library_grower.next_run)
-                : 'Unknown';
+            // ✅ FIXED: Display the actual next run string, not timeAgo
+            nextRun.textContent = data.library_grower.next_run || 'Unknown';
         }
 
         if (albumsToday) {
@@ -145,12 +143,10 @@ class HarmoniqDashboard {
         const lastError = document.getElementById('lastError');
 
         if (systemStatus) {
-            const isHealthy = data.system.services_connected && 
-                            Object.values(data.system.services_connected).every(status => 
-                                status === null || status === true
-                            );
-            systemStatus.textContent = isHealthy ? 'Healthy' : 'Issues';
-            systemStatus.className = `card-status ${isHealthy ? 'enabled' : 'disabled'}`;
+            // ✅ FIXED: Use the new status field
+            const statusText = data.system.status || 'Unknown';
+            systemStatus.textContent = statusText.charAt(0).toUpperCase() + statusText.slice(1);
+            systemStatus.className = `card-status ${data.system.status === 'healthy' ? 'enabled' : 'disabled'}`;
         }
 
         if (uptime) {
@@ -158,9 +154,9 @@ class HarmoniqDashboard {
         }
 
         if (servicesStatus) {
-            const connectedCount = Object.values(data.system.services_connected || {})
-                .filter(status => status === true).length;
-            const totalCount = Object.keys(data.system.services_connected || {}).length;
+            // ✅ FIXED: Use the new connected_count/total_count fields
+            const connectedCount = data.system.connected_count || 0;
+            const totalCount = data.system.total_count || 3;
             servicesStatus.textContent = `${connectedCount}/${totalCount}`;
         }
 
