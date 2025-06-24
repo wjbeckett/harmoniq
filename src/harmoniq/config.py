@@ -209,6 +209,94 @@ try:
             "type": int,
             "yaml_path": "playlists.time_flow.learned_vibe.min_occurrences",
         },
+        "ENABLE_LIBRARY_GROWER": {
+            "default": False,
+            "type": bool,
+            "yaml_path": "features.enable_library_grower",
+        },
+        "LIBRARY_GROWER_RUN_INTERVAL_HOURS": {
+            "default": 24,
+            "type": int,
+            "yaml_path": "library_grower.run_interval_hours",
+        },
+        "LIBRARY_GROWER_TOP_ARTISTS_COUNT": {
+            "default": 30,
+            "type": int,
+            "yaml_path": "library_grower.top_artists_count",
+        },
+        "LIBRARY_GROWER_TOP_ARTISTS_PERIOD": {
+            "default": "6month",
+            "type": str,
+            "yaml_path": "library_grower.top_artists_period",
+        },
+        "LIBRARY_GROWER_SIMILAR_ARTISTS_PER_TOP_ARTIST": {
+            "default": 3,
+            "type": int,
+            "yaml_path": "library_grower.similar_artists_per_top_artist",
+        },
+        "LIBRARY_GROWER_ALBUMS_PER_SIMILAR_ARTIST": {
+            "default": 2,
+            "type": int,
+            "yaml_path": "library_grower.albums_per_similar_artist",
+        },
+        "LIBRARY_GROWER_EXCLUDE_ALBUM_TAGS": {
+            "default": "live,compilation,greatest hits,best of,ep,single,interview,remix,bootleg",
+            "type": list,
+            "yaml_path": "library_grower.exclude_album_tags",
+        },
+        "LIBRARY_GROWER_EXCLUDE_ALBUM_MB_PRIMARY_TYPES": {
+            "default": "ep,single",
+            "type": list,
+            "yaml_path": "library_grower.musicbrainz_filter.exclude_primary_types",
+        },
+        "LIBRARY_GROWER_EXCLUDE_ALBUM_MB_SECONDARY_TYPES": {
+            "default": "live,compilation,dj-mix,interview,remix,demo",
+            "type": list,
+            "yaml_path": "library_grower.musicbrainz_filter.exclude_secondary_types",
+        },
+        "LIBRARY_GROWER_PREFER_MUSICBRAINZ_FILTER": {
+            "default": True,
+            "type": bool,
+            "yaml_path": "library_grower.musicbrainz_filter.prefer_musicbrainz_for_typing",
+        },
+        "LIDARR_URL": {
+            "default": None,
+            "type": str,
+            "required": False,
+            "yaml_path": "lidarr.url",
+        },
+        "LIDARR_API_KEY": {
+            "default": None,
+            "type": str,
+            "required": False,
+            "yaml_path": "lidarr.api_key",
+        },
+        "LIDARR_ROOT_FOLDER_PATH": {
+            "default": None,
+            "type": str,
+            "required": False,
+            "yaml_path": "lidarr.root_folder_path",
+        },
+        "LIDARR_QUALITY_PROFILE_ID": {
+            "default": 1,
+            "type": int,
+            "yaml_path": "lidarr.quality_profile_id",
+        },
+        "LIDARR_METADATA_PROFILE_ID": {
+            "default": 1,
+            "type": int,
+            "yaml_path": "lidarr.metadata_profile_id",
+        },
+        "LIDARR_ADD_ALBUM_MONITORED": {
+            "default": True,
+            "type": bool,
+            "yaml_path": "lidarr.add_album_monitored",
+        },
+        "LIDARR_SEARCH_FOR_ALBUM_ON_ADD": {
+            "default": True,
+            "type": bool,
+            "yaml_path": "lidarr.search_for_album_on_add",
+        },
         "COVER_FONT_FILE_PATH": {
             "default": "/app/harmoniq/fonts/DejaVuSans-Bold.ttf",
             "type": str,
@@ -513,6 +601,22 @@ try:
         # else: logger.info(f"Successfully configured {len(SCHEDULED_PERIODS)} time periods for Harmoniq Flow.") # Logged per source
 
     # --- Final Validations (using globals().get() for safety) ---
+    if globals().get("ENABLE_LIBRARY_GROWER"):
+        if (
+            not globals().get("LIDARR_URL")
+            or not globals().get("LIDARR_API_KEY")
+            or not globals().get("LIDARR_ROOT_FOLDER_PATH")
+        ):
+            logger.error(
+                "Library Grower is enabled, but LIDARR_URL, LIDARR_API_KEY, or LIDARR_ROOT_FOLDER_PATH is missing. Disabling Library Grower."
+            )
+            globals()["ENABLE_LIBRARY_GROWER"] = False
+        if not globals().get("LASTFM_API_KEY") or not globals().get("LASTFM_USER"):
+            logger.error(
+                "Library Grower is enabled, but LASTFM_API_KEY or LASTFM_USER is missing. Disabling Library Grower."
+            )
+            globals()["ENABLE_LIBRARY_GROWER"] = False
+
     if not globals().get("PLEX_URL") or not globals().get("PLEX_TOKEN"):
         critical_error_msg = "CRITICAL FAILURE: PLEX_URL or PLEX_TOKEN not configured after loading all sources."
         logger.error(critical_error_msg)
