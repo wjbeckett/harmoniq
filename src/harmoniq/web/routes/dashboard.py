@@ -33,6 +33,7 @@ async def get_dashboard_overview() -> Dict[str, Any]:
         if config.ENABLE_TIME_PLAYLIST and config.SCHEDULED_PERIODS:
             try:
                 import pytz
+
                 tz = pytz.timezone(config.TIMEZONE)
                 now = datetime.now(tz)
                 current_hour = now.hour
@@ -40,18 +41,24 @@ async def get_dashboard_overview() -> Dict[str, Any]:
                 # Find next period
                 next_hour = None
                 for period in config.SCHEDULED_PERIODS:
-                    start_hour = period.get('start_hour', 0)
+                    start_hour = period.get("start_hour", 0)
                     if start_hour > current_hour:
                         next_hour = start_hour
                         break
 
                 if next_hour is None and config.SCHEDULED_PERIODS:
                     # Next update is tomorrow at first period
-                    first_period = min(config.SCHEDULED_PERIODS, key=lambda p: p.get('start_hour', 0))
-                    next_hour = first_period.get('start_hour', 0)
-                    next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                    first_period = min(
+                        config.SCHEDULED_PERIODS, key=lambda p: p.get("start_hour", 0)
+                    )
+                    next_hour = first_period.get("start_hour", 0)
+                    next_time = now.replace(
+                        hour=next_hour, minute=0, second=0, microsecond=0
+                    ) + timedelta(days=1)
                 else:
-                    next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+                    next_time = now.replace(
+                        hour=next_hour, minute=0, second=0, microsecond=0
+                    )
 
                 next_update = next_time.strftime("%H:%M %Z")
             except Exception as e:
@@ -63,7 +70,7 @@ async def get_dashboard_overview() -> Dict[str, Any]:
             "enabled": config.ENABLE_TIME_PLAYLIST,
             "active_period": active_period.get("name") if active_period else "Unknown",
             "next_update": next_update,
-            "last_update": stats_tracker.get_last_update_time(),
+            "last_update": stats_tracker.stats.get("last_update_time"),
             "total_periods": (
                 len(config.SCHEDULED_PERIODS) if config.SCHEDULED_PERIODS else 0
             ),
@@ -72,7 +79,11 @@ async def get_dashboard_overview() -> Dict[str, Any]:
         # Library Grower status
         library_grower_status = {
             "enabled": config.ENABLE_LIBRARY_GROWER,
-            "next_run": f"{config.LIBRARY_GROWER_RUN_INTERVAL_HOURS} hours" if config.ENABLE_LIBRARY_GROWER else "Disabled",
+            "next_run": (
+                f"{config.LIBRARY_GROWER_RUN_INTERVAL_HOURS} hours"
+                if config.ENABLE_LIBRARY_GROWER
+                else "Disabled"
+            ),
             "last_run": None,  # TODO: Track last run time
             "interval_hours": (
                 config.LIBRARY_GROWER_RUN_INTERVAL_HOURS
@@ -88,12 +99,26 @@ async def get_dashboard_overview() -> Dict[str, Any]:
             "uptime": f"{uptime['session_days']} days, {uptime['session_hours']} hours",
             "last_error": None,  # TODO: Get from logs
             "services_connected": {
-                "plex": "connected" if config.PLEX_URL and config.PLEX_TOKEN else "not_configured",
-                "lastfm": "connected" if config.LASTFM_API_KEY and config.LASTFM_USER else "not_configured",
-                "lidarr": (
-                    "connected" if config.ENABLE_LIBRARY_GROWER and config.LIDARR_URL and config.LIDARR_API_KEY 
-                    else "disabled" if not config.ENABLE_LIBRARY_GROWER 
+                "plex": (
+                    "connected"
+                    if config.PLEX_URL and config.PLEX_TOKEN
                     else "not_configured"
+                ),
+                "lastfm": (
+                    "connected"
+                    if config.LASTFM_API_KEY and config.LASTFM_USER
+                    else "not_configured"
+                ),
+                "lidarr": (
+                    "connected"
+                    if config.ENABLE_LIBRARY_GROWER
+                    and config.LIDARR_URL
+                    and config.LIDARR_API_KEY
+                    else (
+                        "disabled"
+                        if not config.ENABLE_LIBRARY_GROWER
+                        else "not_configured"
+                    )
                 ),
             },
         }
@@ -120,26 +145,34 @@ async def get_recent_activity(limit: int = 10) -> List[Dict[str, Any]]:
         # Convert to dashboard format
         dashboard_activities = []
         for i, activity in enumerate(activities):
-            dashboard_activities.append({
-                "id": i + 1,
-                "type": activity.get("type", "system"),
-                "message": activity.get("message", "Unknown activity"),
-                "timestamp": activity.get("timestamp", datetime.now().isoformat()),
-                "status": "success" if activity.get("type") in ["playlist", "library"] else "info",
-            })
+            dashboard_activities.append(
+                {
+                    "id": i + 1,
+                    "type": activity.get("type", "system"),
+                    "message": activity.get("message", "Unknown activity"),
+                    "timestamp": activity.get("timestamp", datetime.now().isoformat()),
+                    "status": (
+                        "success"
+                        if activity.get("type") in ["playlist", "library"]
+                        else "info"
+                    ),
+                }
+            )
 
         return dashboard_activities
 
     except Exception as e:
         logger.error(f"Recent activity error: {e}")
         # Fallback to basic activity
-        return [{
-            "id": 1,
-            "type": "system",
-            "message": "System running",
-            "timestamp": datetime.now().isoformat(),
-            "status": "info",
-        }]
+        return [
+            {
+                "id": 1,
+                "type": "system",
+                "message": "System running",
+                "timestamp": datetime.now().isoformat(),
+                "status": "info",
+            }
+        ]
 
 
 @router.get("/stats")
@@ -189,10 +222,7 @@ async def trigger_harmoniq_flow_update():
         stats_tracker = get_stats_tracker()
         stats_tracker.record_activity("Manual update triggered", "manual")
 
-        return {
-            "success": True,
-            "message": "Update triggered successfully"
-        }
+        return {"success": True, "message": "Update triggered successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -203,5 +233,5 @@ async def dashboard_health():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "service": "harmoniq-dashboard"
+        "service": "harmoniq-dashboard",
     }
