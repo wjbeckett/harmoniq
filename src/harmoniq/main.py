@@ -8,6 +8,7 @@ from .log_config import logger
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
 from .image_utils import generate_playlist_cover
+from .stats_tracker import get_stats_tracker
 
 
 # --- Helper Function to get current active period details ---
@@ -117,6 +118,7 @@ def run_harmoniq_flow_update(
     active_period_details: dict | None,
 ):
     """Handles the update logic for the Time-Based 'Harmoniq Flow' Playlist."""
+    stats_tracker = get_stats_tracker()
     if not (config.ENABLE_TIME_PLAYLIST and plex_client and valid_music_libraries):
         logger.info(
             "Skipping Harmoniq Flow: Feature disabled or Plex client/libraries not available."
@@ -133,6 +135,8 @@ def run_harmoniq_flow_update(
         base_target_moods = active_period_details["criteria"]["moods"]
         base_target_styles = active_period_details["criteria"]["styles"]
         period_hours_set = active_period_details["hours_set"]
+
+        stats_tracker.record_period_switch(period_name)
 
         # The main processing, including vibe learning, is now inside generate_harmoniq_flow_playlist
         logger.info(
@@ -163,6 +167,9 @@ def run_harmoniq_flow_update(
             if playlist_updated:
                 logger.info(
                     f"Successfully updated '{config.PLAYLIST_NAME_TIME}' for '{period_name}'."
+                )
+                stats_tracker.record_playlist_update(
+                    period_name, len(time_based_tracks)
                 )
                 if config.ENABLE_PLAYLIST_COVERS:
                     logger.info("Attempting to generate and upload playlist cover...")
@@ -244,6 +251,8 @@ def run_library_grower_cycle():
     if not config.ENABLE_LIBRARY_GROWER:
         logger.info("Library Grower is disabled. Skipping cycle.")
         return
+
+    stats_tracker = get_stats_tracker()
 
     logger.info("Starting Library Grower cycle...")
 
@@ -580,6 +589,11 @@ def run_library_grower_cycle():
             f"  Albums successfully added to Lidarr: {stats['albums_added_to_lidarr']}"
         )
         logger.info(f"  Albums failed to add: {stats['albums_failed_to_add']}")
+
+        stats_tracker.record_library_grower_activity(
+            albums_added=stats["albums_added_to_lidarr"],
+            artists_processed=stats["similar_artists_found"],
+        )
 
     except Exception as e:
         logger.exception(f"Library Grower: Unexpected error during cycle: {e}")

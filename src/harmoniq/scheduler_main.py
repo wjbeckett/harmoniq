@@ -135,7 +135,14 @@ def library_grower_job_wrapper():
 
 if __name__ == "__main__":
     logger.info("🎵 Harmoniq Multi-Job Scheduler starting...")
-    logger.info("🌐 Web UI will be available at http://localhost:7845 (if web server is running)")
+    logger.info(
+        "🌐 Web UI will be available at http://localhost:7845 (if web server is running)"
+    )
+
+    from .stats_tracker import get_stats_tracker
+
+    stats_tracker = get_stats_tracker()
+    stats_tracker.record_system_start()
 
     initialize_global_clients_and_libs()
 
@@ -194,7 +201,6 @@ if __name__ == "__main__":
         library_grower_job_wrapper()
     logger.info("Initial job runs complete. Waiting for scheduled runs...")
 
-    # --- Main Scheduler Loop (remains the same) ---
     while not shutdown_event_triggered:
         n = schedule.idle_seconds()
         if n is None:
