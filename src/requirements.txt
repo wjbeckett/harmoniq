@@ -1,19 +1,7 @@
-# Harmoniq Requirements
-
-# Core dependencies
+python-dotenv # For local .env loading
 requests
-pyyaml
-python-dotenv
+PlexAPI
+pytz
 schedule
-plexapi
-musicbrainzngs
-
-# Web UI dependencies
-fastapi
-uvicorn[standard]
-jinja2
-python-multipart
-aiofiles
-
-# Optional: For better performance
-orjson
+Pillow
+PyYAML
