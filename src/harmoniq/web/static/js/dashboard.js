@@ -76,7 +76,15 @@ class HarmoniqDashboard {
             this.updateRecentActivity(recentActivity);
             this.updateStats(stats);
 
-            this.lastUpdate = new Date();
+            // Load album ribbon
+            await this.loadAlbumRibbon();
+
+            // Update last update time
+            if (overviewData.last_update) {
+                this.lastUpdate = new Date(overviewData.last_update);
+            } else {
+                this.lastUpdate = new Date();
+            }
 
         } catch (error) {
             console.error('Failed to load dashboard data:', error);
@@ -237,6 +245,124 @@ class HarmoniqDashboard {
         activityFeed.innerHTML = activityHTML;
     }
 
+    async loadAlbumRibbon() {
+        try {
+            const [albumsData, statsData] = await Promise.all([
+                window.api.get('/dashboard/test-albums'),  // ← Test endpoint
+                window.api.get('/dashboard/test-album-stats')  // ← Test endpoint
+                //window.api.get('/dashboard/recently-added-albums?limit=15'),
+                //window.api.get('/dashboard/album-stats')
+            ]);
+
+            this.updateAlbumRibbon(albumsData);
+            this.updateAlbumStats(statsData);
+
+        } catch (error) {
+            console.error('Failed to load album ribbon:', error);
+            this.showAlbumRibbonError();
+        }
+    }
+
+    updateAlbumRibbon(albums) {
+        const ribbonContainer = document.getElementById('albumRibbon');
+        if (!ribbonContainer) return;
+
+        if (!albums || albums.length === 0) {
+            ribbonContainer.innerHTML = `
+                <div class="album-empty">
+                    <i class="fas fa-compact-disc"></i>
+                    <h3>No Albums Yet</h3>
+                    <p>Albums added by Library Grower will appear here</p>
+                </div>
+            `;
+            return;
+        }
+
+        const albumsHTML = albums.map(album => `
+            <div class="album-item" onclick="openAlbumDetails('${album.lidarr_id || ''}', '${album.mbid || ''}')">
+                <div class="album-cover-container">
+                    <img 
+                        class="album-cover loading" 
+                        src="${album.cover_art_url}" 
+                        alt="${album.title} by ${album.artist}"
+                        onload="this.classList.remove('loading')"
+                        onerror="this.classList.add('error'); this.innerHTML='<i class=\"fas fa-music\"></i>'"
+                    />
+                </div>
+                <div class="album-info">
+                    <div class="album-title" title="${album.title}">${album.title}</div>
+                    <div class="album-artist" title="${album.artist}">${album.artist}</div>
+                    <div class="album-time">${album.relative_time}</div>
+                </div>
+            </div>
+        `).join('');
+
+        ribbonContainer.innerHTML = albumsHTML;
+
+        // Update scroll button states
+        this.updateScrollButtons();
+    }
+
+    updateAlbumStats(stats) {
+        const elements = {
+            albumsAddedToday: stats.albums_added_today || 0,
+            totalAlbumsAdded: stats.total_albums_added || 0,
+            lastAlbumAdded: stats.last_album_added ? 
+                window.utils.timeAgo(stats.last_album_added) : 'Never'
+        };
+
+        Object.entries(elements).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) {
+                if (typeof value === 'number') {
+                    this.animateNumber(element, parseInt(element.textContent) || 0, value);
+                } else {
+                    element.textContent = value;
+                }
+            }
+        });
+    }
+
+    showAlbumRibbonError() {
+        const ribbonContainer = document.getElementById('albumRibbon');
+        if (ribbonContainer) {
+            ribbonContainer.innerHTML = `
+                <div class="album-empty">
+                    <i class="fas fa-exclamation-triangle" style="color: var(--error);"></i>
+                    <h3>Failed to Load Albums</h3>
+                    <p>Unable to fetch recently added albums</p>
+                    <button class="btn btn-primary btn-sm" onclick="dashboard.loadAlbumRibbon()">
+                        <i class="fas fa-retry"></i> Retry
+                    </button>
+                </div>
+            `;
+        }
+    }
+
+    updateScrollButtons() {
+        const ribbon = document.getElementById('albumRibbon');
+        const leftBtn = document.getElementById('scrollLeft');
+        const rightBtn = document.getElementById('scrollRight');
+
+        if (!ribbon || !leftBtn || !rightBtn) return;
+
+        // Check if scrolling is needed
+        const needsScroll = ribbon.scrollWidth > ribbon.clientWidth;
+
+        if (!needsScroll) {
+            leftBtn.style.display = 'none';
+            rightBtn.style.display = 'none';
+            return;
+        }
+
+        leftBtn.style.display = 'flex';
+        rightBtn.style.display = 'flex';
+
+        // Update button states based on scroll position
+        leftBtn.disabled = ribbon.scrollLeft <= 0;
+        rightBtn.disabled = ribbon.scrollLeft >= (ribbon.scrollWidth - ribbon.clientWidth);
+    }
+
     updateStats(stats) {
         const statElements = {
             playlistsUpdated: stats.total_playlists_updated,
@@ -381,6 +507,61 @@ async function testService(serviceName) {
 // Global functions
 window.refreshDashboard = () => dashboard.refreshDashboard();
 window.testService = testService;
+
+window.scrollAlbumRibbon = function(direction) {
+    const ribbon = document.getElementById('albumRibbon');
+    if (!ribbon) return;
+
+    const scrollAmount = 240; // 2 albums worth
+    const currentScroll = ribbon.scrollLeft;
+
+    if (direction === 'left') {
+        ribbon.scrollTo({
+            left: currentScroll - scrollAmount,
+            behavior: 'smooth'
+        });
+    } else {
+        ribbon.scrollTo({
+            left: currentScroll + scrollAmount,
+            behavior: 'smooth'
+        });
+    }
+
+    // Update button states after scroll
+    setTimeout(() => dashboard.updateScrollButtons(), 300);
+};
+
+window.refreshAlbumRibbon = function() {
+    window.showToast('Refreshing albums...', 'info', 2000);
+    dashboard.loadAlbumRibbon().then(() => {
+        window.showToast('Albums updated!', 'success', 2000);
+    });
+};
+
+window.openAlbumDetails = function(lidarrId, mbid) {
+    // TODO: Open album details modal or navigate to Lidarr/Plex
+    if (lidarrId) {
+        // Open in Lidarr
+        window.open(`${config.LIDARR_URL}/album/${lidarrId}`, '_blank');
+    } else if (mbid) {
+        // Open in MusicBrainz
+        window.open(`https://musicbrainz.org/release/${mbid}`, '_blank');
+    } else {
+        window.showToast('Album details not available', 'info');
+    }
+};
+
+// Add scroll event listener for button updates
+document.addEventListener('DOMContentLoaded', () => {
+    const ribbon = document.getElementById('albumRibbon');
+    if (ribbon) {
+        ribbon.addEventListener('scroll', () => {
+            if (dashboard) {
+                dashboard.updateScrollButtons();
+            }
+        });
+    }
+});
 
 // Initialize dashboard when DOM is ready
 let dashboard;

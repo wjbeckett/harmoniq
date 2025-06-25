@@ -228,6 +228,94 @@ class HarmoniqStatsTracker:
             "total_periods": 6,  # From your config
         }
 
+    def record_album_added(self, album_data: Dict):
+        """Record a newly added album with metadata for the ribbon."""
+        with self.lock:
+            # Initialize album tracking if not exists
+            if "recently_added_albums" not in self.stats:
+                self.stats["recently_added_albums"] = []
+
+            # Create album record
+            album_record = {
+                "title": album_data.get("title", "Unknown Album"),
+                "artist": album_data.get("artist", "Unknown Artist"),
+                "year": album_data.get("year"),
+                "mbid": album_data.get("musicbrainz_id"),  # For album art
+                "lidarr_id": album_data.get("lidarr_id"),
+                "added_date": datetime.now().isoformat(),
+                "cover_art_url": album_data.get("cover_art_url"),  # If available
+            }
+
+            # Add to beginning of list (most recent first)
+            self.stats["recently_added_albums"].insert(0, album_record)
+
+            # Keep only last 20 albums for the ribbon
+            if len(self.stats["recently_added_albums"]) > 20:
+                self.stats["recently_added_albums"] = self.stats[
+                    "recently_added_albums"
+                ][:20]
+
+            # Update daily stats
+            today = datetime.now().strftime("%Y-%m-%d")
+            if today not in self.stats["daily_stats"]:
+                self.stats["daily_stats"][today] = {
+                    "updates": 0,
+                    "tracks": 0,
+                    "albums": 0,
+                }
+            if "albums" not in self.stats["daily_stats"][today]:
+                self.stats["daily_stats"][today]["albums"] = 0
+            self.stats["daily_stats"][today]["albums"] += 1
+
+            # Add to activity log
+            self._add_activity(
+                f"Added album: {album_record['artist']} - {album_record['title']}",
+                "library",
+            )
+
+            self._save_stats()
+
+    def get_recently_added_albums(self, limit: int = 10) -> List[Dict]:
+        """Get recently added albums for the ribbon."""
+        fresh_stats = self._reload_fresh_stats()
+        albums = fresh_stats.get("recently_added_albums", [])[:limit]
+
+        # Add relative time for each album
+        for album in albums:
+            try:
+                added_date = datetime.fromisoformat(album["added_date"])
+                now = datetime.now()
+                diff = now - added_date
+
+                if diff.days > 0:
+                    album["relative_time"] = (
+                        f"{diff.days} day{'s' if diff.days != 1 else ''} ago"
+                    )
+                elif diff.seconds > 3600:
+                    hours = diff.seconds // 3600
+                    album["relative_time"] = (
+                        f"{hours} hour{'s' if hours != 1 else ''} ago"
+                    )
+                elif diff.seconds > 60:
+                    minutes = diff.seconds // 60
+                    album["relative_time"] = (
+                        f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+                    )
+                else:
+                    album["relative_time"] = "Just added"
+            except Exception:
+                album["relative_time"] = "Recently"
+
+        return albums
+
+    def get_daily_album_count(self, date: str = None) -> int:
+        """Get album count for a specific date (defaults to today)."""
+        if date is None:
+            date = datetime.now().strftime("%Y-%m-%d")
+
+        fresh_stats = self._reload_fresh_stats()
+        return fresh_stats.get("daily_stats", {}).get(date, {}).get("albums", 0)
+
 
 # Global stats tracker instance
 _stats_tracker = None

@@ -149,6 +149,54 @@
         </div>
     </div>
 
+    <!-- Album Ribbon Section -->
+    <section class="dashboard-section">
+        <div class="section-header">
+            <h2>
+                <i class="fas fa-compact-disc"></i>
+                Recently Added Albums
+            </h2>
+            <button class="btn btn-secondary btn-sm" onclick="refreshAlbumRibbon()">
+                <i class="fas fa-sync-alt"></i>
+                Refresh
+            </button>
+        </div>
+
+        <div class="album-ribbon-container">
+            <div class="album-ribbon" id="albumRibbon">
+                <!-- Albums will be loaded here -->
+                <div class="album-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <span>Loading albums...</span>
+                </div>
+            </div>
+
+            <div class="album-ribbon-controls">
+                <button class="ribbon-scroll-btn" id="scrollLeft" onclick="scrollAlbumRibbon('left')">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <button class="ribbon-scroll-btn" id="scrollRight" onclick="scrollAlbumRibbon('right')">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="album-ribbon-stats">
+            <div class="ribbon-stat">
+                <span class="stat-value" id="albumsAddedToday">0</span>
+                <span class="stat-label">Added Today</span>
+            </div>
+            <div class="ribbon-stat">
+                <span class="stat-value" id="totalAlbumsAdded">0</span>
+                <span class="stat-label">Total Added</span>
+            </div>
+            <div class="ribbon-stat">
+                <span class="stat-value" id="lastAlbumAdded">Never</span>
+                <span class="stat-label">Last Added</span>
+            </div>
+        </div>
+    </section>
+
     <!-- Services Status Section -->
     <div class="services-section">
         <h2 class="section-title">

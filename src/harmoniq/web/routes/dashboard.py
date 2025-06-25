@@ -270,6 +270,179 @@ async def get_dashboard_stats() -> Dict[str, Any]:
         }
 
 
+@router.get("/recently-added-albums")
+async def get_recently_added_albums(limit: int = 10) -> List[Dict[str, Any]]:
+    """Get recently added albums for the ribbon display."""
+    try:
+        stats_tracker = get_stats_tracker()
+        albums = stats_tracker.get_recently_added_albums(limit)
+
+        # Enhance with album art URLs if not already present
+        for album in albums:
+            if not album.get("cover_art_url") and album.get("mbid"):
+                # Try to get cover art from MusicBrainz
+                album["cover_art_url"] = (
+                    f"https://coverartarchive.org/release/{album['mbid']}/front-250"
+                )
+            elif not album.get("cover_art_url"):
+                # Fallback placeholder
+                album["cover_art_url"] = "/static/images/album-placeholder.png"
+
+        return albums
+
+    except Exception as e:
+        logger.error(f"Error fetching recently added albums: {e}")
+        return []
+
+
+@router.get("/album-stats")
+async def get_album_stats() -> Dict[str, Any]:
+    """Get album-related statistics."""
+    try:
+        stats_tracker = get_stats_tracker()
+        today_count = stats_tracker.get_daily_album_count()
+        fresh_stats = stats_tracker._reload_fresh_stats()
+
+        return {
+            "albums_added_today": today_count,
+            "total_albums_added": fresh_stats.get("library_grower", {}).get(
+                "total_albums", 0
+            ),
+            "recent_albums_count": len(fresh_stats.get("recently_added_albums", [])),
+            "last_album_added": (
+                fresh_stats.get("recently_added_albums", [{}])[0].get("added_date")
+                if fresh_stats.get("recently_added_albums")
+                else None
+            ),
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching album stats: {e}")
+        return {
+            "albums_added_today": 0,
+            "total_albums_added": 0,
+            "recent_albums_count": 0,
+            "last_album_added": None,
+        }
+
+
+# Test data endpoints - REMOVE after testing
+@router.get("/test-albums")
+async def get_test_albums() -> List[Dict[str, Any]]:
+    """Test endpoint with mock album data - REMOVE after testing."""
+    mock_albums = [
+        {
+            "title": "The Dark Side of the Moon",
+            "artist": "Pink Floyd",
+            "year": 1973,
+            "mbid": "a1ed8f01-2d20-423a-9a8a-d4d85f6fdbb1",
+            "lidarr_id": "1",
+            "added_date": (datetime.now() - timedelta(hours=2)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/a1ed8f01-2d20-423a-9a8a-d4d85f6fdbb1/front-250",
+        },
+        {
+            "title": "Abbey Road",
+            "artist": "The Beatles",
+            "year": 1969,
+            "mbid": "b84ee12a-09ef-421b-82de-0441a926375a",
+            "lidarr_id": "2",
+            "added_date": (datetime.now() - timedelta(hours=5)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/b84ee12a-09ef-421b-82de-0441a926375a/front-250",
+        },
+        {
+            "title": "Thriller",
+            "artist": "Michael Jackson",
+            "year": 1982,
+            "mbid": "549a8829-456c-4408-87f8-4596b2a74177",
+            "lidarr_id": "3",
+            "added_date": (datetime.now() - timedelta(days=1)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/549a8829-456c-4408-87f8-4596b2a74177/front-250",
+        },
+        {
+            "title": "Back in Black",
+            "artist": "AC/DC",
+            "year": 1980,
+            "mbid": "7c1014eb-454c-4077-8d2d-c0d6f18a5dd9",
+            "lidarr_id": "4",
+            "added_date": (datetime.now() - timedelta(days=2)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/7c1014eb-454c-4077-8d2d-c0d6f18a5dd9/front-250",
+        },
+        {
+            "title": "Hotel California",
+            "artist": "Eagles",
+            "year": 1976,
+            "mbid": "f970f1e0-0247-4ed3-bcc0-2c2d2a4b62c8",
+            "lidarr_id": "5",
+            "added_date": (datetime.now() - timedelta(days=3)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/f970f1e0-0247-4ed3-bcc0-2c2d2a4b62c8/front-250",
+        },
+        {
+            "title": "Rumours",
+            "artist": "Fleetwood Mac",
+            "year": 1977,
+            "mbid": "1e0eee38-a9f6-49bf-84d0-45d0647799af",
+            "lidarr_id": "6",
+            "added_date": (datetime.now() - timedelta(days=4)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/1e0eee38-a9f6-49bf-84d0-45d0647799af/front-250",
+        },
+        {
+            "title": "Led Zeppelin IV",
+            "artist": "Led Zeppelin",
+            "year": 1971,
+            "mbid": "2acc8b09-8d62-4814-be2f-d31dc0eaef8b",
+            "lidarr_id": "7",
+            "added_date": (datetime.now() - timedelta(days=5)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/2acc8b09-8d62-4814-be2f-d31dc0eaef8b/front-250",
+        },
+        {
+            "title": "The Wall",
+            "artist": "Pink Floyd",
+            "year": 1979,
+            "mbid": "ba7b9055-2dc4-4ed7-bb5a-b4f1fe5c8e9d",
+            "lidarr_id": "8",
+            "added_date": (datetime.now() - timedelta(days=6)).isoformat(),
+            "cover_art_url": "https://coverartarchive.org/release/ba7b9055-2dc4-4ed7-bb5a-b4f1fe5c8e9d/front-250",
+        },
+    ]
+
+    # Add relative time for each album
+    for album in mock_albums:
+        try:
+            added_date = datetime.fromisoformat(album["added_date"])
+            now = datetime.now()
+            diff = now - added_date
+
+            if diff.days > 0:
+                album["relative_time"] = (
+                    f"{diff.days} day{'s' if diff.days != 1 else ''} ago"
+                )
+            elif diff.seconds > 3600:
+                hours = diff.seconds // 3600
+                album["relative_time"] = f"{hours} hour{'s' if hours != 1 else ''} ago"
+            elif diff.seconds > 60:
+                minutes = diff.seconds // 60
+                album["relative_time"] = (
+                    f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+                )
+            else:
+                album["relative_time"] = "Just added"
+        except Exception:
+            album["relative_time"] = "Recently"
+
+    return mock_albums
+
+
+@router.get("/test-album-stats")
+async def get_test_album_stats() -> Dict[str, Any]:
+    """Test endpoint with mock album stats - REMOVE after testing."""
+    return {
+        "albums_added_today": 3,
+        "total_albums_added": 47,
+        "recent_albums_count": 8,
+        "last_album_added": (datetime.now() - timedelta(hours=2)).isoformat(),
+    }
+
+
 @router.post("/trigger-update")
 async def trigger_harmoniq_flow_update():
     """Trigger a manual Harmoniq Flow update."""
