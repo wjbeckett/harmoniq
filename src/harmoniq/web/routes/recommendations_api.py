@@ -3,7 +3,7 @@ Album Recommendations API Endpoints
 Provides REST API for the Album Recommendations page
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import logging
@@ -42,9 +42,6 @@ class DiscoveryRequest(BaseModel):
     force_refresh: bool = False
 
 
-from fastapi import APIRouter, HTTPException, Query, Request
-
-
 def get_recommendation_manager(request: Request) -> AlbumRecommendationManager:
     """Get recommendation manager from app state."""
     manager = getattr(request.app.state, "recommendation_manager", None)
@@ -72,10 +69,6 @@ async def get_pending_recommendations(
     """Get pending recommendations for user review."""
     try:
         recommendation_manager = get_recommendation_manager(request)
-        if not recommendation_manager:
-            raise HTTPException(
-                status_code=500, detail="Recommendation manager not initialized"
-            )
 
         if search:
             recommendations = recommendation_manager.search_recommendations(
@@ -105,10 +98,6 @@ async def get_all_recommendations(
     """Get all recommendations with optional filtering."""
     try:
         recommendation_manager = get_recommendation_manager(request)
-        if not recommendation_manager:
-            raise HTTPException(
-                status_code=500, detail="Recommendation manager not initialized"
-            )
 
         # Parse status if provided
         status_filter = None
@@ -147,10 +136,6 @@ async def update_recommendation_status(
     """Update the status of a single recommendation."""
     try:
         recommendation_manager = get_recommendation_manager(request)
-        if not recommendation_manager:
-            raise HTTPException(
-                status_code=500, detail="Recommendation manager not initialized"
-            )
 
         # Validate status
         try:
@@ -185,10 +170,6 @@ async def bulk_update_recommendations(
 ) -> Dict[str, Any]:
     """Update multiple recommendations at once."""
     recommendation_manager = get_recommendation_manager(request)
-    if not recommendation_manager:
-        raise HTTPException(
-            status_code=500, detail="Recommendation manager not initialized"
-        )
 
     # Validate status
     try:
@@ -221,16 +202,20 @@ async def trigger_discovery(
     request: Request, discovery_request: DiscoveryRequest
 ) -> Dict[str, Any]:
     """Trigger album discovery process."""
-    discovery_engine = get_discovery_engine(request)
+    try:
+        discovery_engine = get_discovery_engine(request)
 
-    logger.info("Manual discovery triggered via API")
-    results = await discovery_engine.run_discovery_cycle()
+        logger.info("Manual discovery triggered via API")
+        results = await discovery_engine.run_discovery_cycle()
 
-    return {
-        "success": True,
-        "message": f"Discovery complete: {results['new_recommendations']} new recommendations",
-        "results": results,
-    }
+        return {
+            "success": True,
+            "message": f"Discovery complete: {results['new_recommendations']} new recommendations",
+            "results": results,
+        }
+    except Exception as e:
+        logger.error(f"Error triggering discovery: {e}")
+        raise HTTPException(status_code=500, detail="Failed to trigger discovery")
 
 
 @router.post("/process-approved")
@@ -260,10 +245,6 @@ async def get_recommendation_statistics(request: Request) -> Dict[str, Any]:
     """Get recommendation statistics and analytics."""
     try:
         recommendation_manager = get_recommendation_manager(request)
-        if not recommendation_manager:
-            raise HTTPException(
-                status_code=500, detail="Recommendation manager not initialized"
-            )
 
         stats = recommendation_manager.get_statistics()
 
@@ -294,10 +275,6 @@ async def cleanup_old_recommendations(
     """Clean up old denied/failed recommendations."""
     try:
         recommendation_manager = get_recommendation_manager(request)
-        if not recommendation_manager:
-            raise HTTPException(
-                status_code=500, detail="Recommendation manager not initialized"
-            )
 
         removed_count = recommendation_manager.cleanup_old_recommendations(days_old)
 
@@ -318,10 +295,6 @@ async def get_album_preview(album_id: str, request: Request) -> Dict[str, Any]:
     """Get enhanced preview data for an album."""
     try:
         recommendation_manager = get_recommendation_manager(request)
-        if not recommendation_manager:
-            raise HTTPException(
-                status_code=500, detail="Recommendation manager not initialized"
-            )
 
         # Get the recommendation
         recommendations = recommendation_manager.recommendations["recommendations"]
