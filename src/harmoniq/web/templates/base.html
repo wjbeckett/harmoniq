@@ -38,19 +38,19 @@
             </div>
 
             <div class="nav-links">
-                <a href="/" class="nav-link active">
+                <a href="/" class="nav-link" data-page="dashboard">
                     <i class="fas fa-tachometer-alt"></i>
                     <span>Dashboard</span>
                 </a>
-                <a href="/recommendations" class="nav-link">
+                <a href="/recommendations" class="nav-link" data-page="recommendations">
                     <i class="fas fa-compact-disc"></i>
                     <span>Recommendations</span>
                 </a>
-                <a href="/config" class="nav-link">
+                <a href="/config" class="nav-link" data-page="config">
                     <i class="fas fa-cog"></i>
                     <span>Configuration</span>
                 </a>
-                <a href="/logs" class="nav-link">
+                <a href="/logs" class="nav-link" data-page="logs">
                     <i class="fas fa-file-alt"></i>
                     <span>Logs</span>
                 </a>
@@ -93,6 +93,26 @@
     <!-- Base JavaScript -->
     <script src="{{ url_for('static', path='js/theme.js') }}"></script>
     <script src="{{ url_for('static', path='js/utils.js') }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set active navigation based on current path
+            const currentPath = window.location.pathname;
+            const navLinks = document.querySelectorAll('.nav-link');
+            
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                
+                const href = link.getAttribute('href');
+                if (href === currentPath || 
+                    (currentPath === '/' && href === '/') ||
+                    (currentPath.startsWith('/recommendations') && href === '/recommendations') ||
+                    (currentPath.startsWith('/config') && href === '/config') ||
+                    (currentPath.startsWith('/logs') && href === '/logs')) {
+                    link.classList.add('active');
+                }
+            });
+        });
+    </script>
 
     {% block scripts %}{% endblock %}
 </body>
