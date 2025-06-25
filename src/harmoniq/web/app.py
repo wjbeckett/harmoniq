@@ -11,6 +11,12 @@ import os
 from pathlib import Path
 
 from .routes import dashboard, status, recommendations_api
+from ..recommendation_storage import AlbumRecommendationManager
+from ..discovery_library_grower import AlbumDiscoveryEngine
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -23,6 +29,31 @@ def create_app() -> FastAPI:
         docs_url="/api/docs",
         redoc_url="/api/redoc",
     )
+
+    # Initialize recommendation manager for web app
+    try:
+        from .. import config  # Import your config
+
+        recommendation_manager = AlbumRecommendationManager()
+        app.state.recommendation_manager = recommendation_manager
+        logger.info("Web app: Recommendation manager initialized successfully")
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize recommendation manager: {e}")
+        app.state.recommendation_manager = None
+
+    # Initialize discovery engine for web app
+    try:
+        from ..lastfm_client import LastfmClient
+        from ..lidarr_client import LidarrClient
+
+        lastfm_client = LastfmClient()
+        lidarr_client = LidarrClient()
+        discovery_engine = AlbumDiscoveryEngine(config, lastfm_client, lidarr_client)
+        app.state.discovery_engine = discovery_engine
+        logger.info("Web app: Discovery engine initialized successfully")
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize discovery engine: {e}")
+        app.state.discovery_engine = None
 
     # Get the web directory path
     web_dir = Path(__file__).parent
