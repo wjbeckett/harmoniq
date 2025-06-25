@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 import os
 from pathlib import Path
 
-from .routes import dashboard, status
+from .routes import dashboard, status, recommendations_api
 
 
 def create_app() -> FastAPI:
@@ -39,6 +39,9 @@ def create_app() -> FastAPI:
     # Include API routes with /api prefix
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
     app.include_router(status.router, prefix="/api/status", tags=["Status"])
+    app.include_router(
+        recommendations_api.router, prefix="/api", tags=["Recommendations"]
+    )
 
     # HTML Routes (Dashboard Pages)
     @app.get("/", response_class=HTMLResponse)
@@ -60,6 +63,14 @@ def create_app() -> FastAPI:
         """Logs page (placeholder for future)."""
         return templates.TemplateResponse(
             "base.html", {"request": request, "page_title": "Logs - Harmoniq"}
+        )
+
+    @app.get("/recommendations", response_class=HTMLResponse)
+    async def recommendations_page(request: Request):
+        """Album recommendations page."""
+        return templates.TemplateResponse(
+            "recommendations.html",
+            {"request": request, "page_title": "Recommendations - Harmoniq"},
         )
 
     # Health check endpoint

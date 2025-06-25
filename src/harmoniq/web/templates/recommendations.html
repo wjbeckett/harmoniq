@@ -1,0 +1,203 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Album Recommendations - Harmoniq</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <i class="fas fa-music"></i>
+                <span>Harmoniq</span>
+            </div>
+            <div class="nav-links">
+                <a href="/dashboard" class="nav-link">
+                    <i class="fas fa-tachometer-alt"></i>
+                    Dashboard
+                </a>
+                <a href="/recommendations" class="nav-link active">
+                    <i class="fas fa-star"></i>
+                    Recommendations
+                </a>
+                <div class="theme-toggle" onclick="window.theme.toggle()">
+                    <i class="fas fa-moon"></i>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="page-header">
+            <div class="header-content">
+                <h1>
+                    <i class="fas fa-star"></i>
+                    Album Recommendations
+                </h1>
+                <p class="header-subtitle">Discover and curate new music for your library</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-secondary" onclick="triggerDiscovery()">
+                    <i class="fas fa-search"></i>
+                    Discover New Albums
+                </button>
+                <button class="btn btn-primary" onclick="processApproved()">
+                    <i class="fas fa-download"></i>
+                    Add Approved to Lidarr
+                </button>
+            </div>
+        </div>
+
+        <!-- Statistics Bar -->
+        <section class="stats-bar">
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-clock"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value" id="pendingCount">0</div>
+                    <div class="stat-label">Pending Review</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value" id="approvedCount">0</div>
+                    <div class="stat-label">Ready to Add</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-percentage"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value" id="approvalRate">0%</div>
+                    <div class="stat-label">Approval Rate</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">
+                    <i class="fas fa-plus-circle"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value" id="totalAdded">0</div>
+                    <div class="stat-label">Total Added</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Filters and Search -->
+        <section class="filters-section">
+            <div class="filters-container">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchInput" placeholder="Search albums or artists..." />
+                    <button class="search-clear" onclick="clearSearch()" style="display: none;">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+
+                <div class="filter-tabs">
+                    <button class="filter-tab active" data-status="pending" onclick="switchFilter('pending')">
+                        <i class="fas fa-clock"></i>
+                        Pending
+                        <span class="tab-count" id="pendingTabCount">0</span>
+                    </button>
+                    <button class="filter-tab" data-status="approved" onclick="switchFilter('approved')">
+                        <i class="fas fa-check"></i>
+                        Approved
+                        <span class="tab-count" id="approvedTabCount">0</span>
+                    </button>
+                    <button class="filter-tab" data-status="denied" onclick="switchFilter('denied')">
+                        <i class="fas fa-times"></i>
+                        Denied
+                        <span class="tab-count" id="deniedTabCount">0</span>
+                    </button>
+                    <button class="filter-tab" data-status="all" onclick="switchFilter('all')">
+                        <i class="fas fa-list"></i>
+                        All
+                        <span class="tab-count" id="allTabCount">0</span>
+                    </button>
+                </div>
+
+                <div class="bulk-actions" id="bulkActions" style="display: none;">
+                    <span class="bulk-selected">
+                        <span id="selectedCount">0</span> selected
+                    </span>
+                    <button class="btn btn-success btn-sm" onclick="bulkApprove()">
+                        <i class="fas fa-check"></i>
+                        Approve
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="bulkDeny()">
+                        <i class="fas fa-times"></i>
+                        Deny
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="clearSelection()">
+                        <i class="fas fa-times-circle"></i>
+                        Clear
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Recommendations Grid -->
+        <section class="recommendations-section">
+            <div class="recommendations-grid" id="recommendationsGrid">
+                <!-- Loading state -->
+                <div class="loading-state" id="loadingState">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <span>Loading recommendations...</span>
+                </div>
+            </div>
+
+            <!-- Load More Button -->
+            <div class="load-more-container" id="loadMoreContainer" style="display: none;">
+                <button class="btn btn-secondary" onclick="loadMoreRecommendations()">
+                    <i class="fas fa-chevron-down"></i>
+                    Load More
+                </button>
+            </div>
+        </section>
+
+        <!-- Empty State -->
+        <div class="empty-state" id="emptyState" style="display: none;">
+            <i class="fas fa-star"></i>
+            <h3>No Recommendations Yet</h3>
+            <p>Click "Discover New Albums" to find music recommendations based on your Last.fm listening history.</p>
+            <button class="btn btn-primary" onclick="triggerDiscovery()">
+                <i class="fas fa-search"></i>
+                Start Discovery
+            </button>
+        </div>
+    </main>
+
+    <!-- Album Preview Modal -->
+    <div class="modal" id="albumPreviewModal">
+        <div class="modal-content album-preview-modal">
+            <div class="modal-header">
+                <h3 id="previewAlbumTitle">Album Preview</h3>
+                <button class="modal-close" onclick="closePreviewModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" id="previewModalBody">
+                <!-- Preview content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Scripts -->
+    <script src="/static/js/theme.js"></script>
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/recommendations.js"></script>
+</body>
+</html>

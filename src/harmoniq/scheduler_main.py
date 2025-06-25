@@ -12,8 +12,9 @@ import logging
 from .main import (
     run_harmoniq_flow_update,
     get_active_period_details,
-    run_library_grower_cycle,
 )
+from .discovery_library_grower import DiscoveryLibraryGrower
+from .lidarr_client import LidarrClient
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
 from . import config
@@ -41,10 +42,11 @@ plex_client_global = None
 lastfm_client_global = None
 valid_music_libraries_global = []
 target_library_global = None
+discovery_engine_global = None
 
 
 def initialize_global_clients_and_libs():
-    global plex_client_global, lastfm_client_global, valid_music_libraries_global, target_library_global
+    global plex_client_global, lastfm_client_global, valid_music_libraries_global, target_library_global, discovery_engine_global
     logger.info("Scheduler: Initializing global Plex and Last.fm clients...")
     valid_music_libraries_global = (
         []
@@ -68,6 +70,12 @@ def initialize_global_clients_and_libs():
                 )
         else:
             logger.error("Scheduler: Plex client failed to initialize.")
+        lastfm_client_global = LastfmClient()
+        lidarr_client = LidarrClient()
+        discovery_engine_global = DiscoveryLibraryGrower(
+            config, lastfm_client_global, lidarr_client
+        )
+        logger.info("Scheduler: Discovery engine initialized successfully.")
     except Exception as e:
         logger.exception(
             f"Scheduler: Critical error during global client initialization: {e}"
@@ -120,17 +128,25 @@ def harmoniq_flow_job_wrapper(
 
 def library_grower_job_wrapper():
     """Wrapper function for the Library Grower scheduled job."""
-    logger.info("Scheduler: Triggered Library Grower cycle job.")
+    logger.info("Scheduler: Triggered Library Grower discovery cycle job.")
 
     if not config.ENABLE_LIBRARY_GROWER:
         logger.info("Scheduler: Library Grower is disabled, skipping job.")
         return
 
+    if not discovery_engine_global:
+        logger.error("Scheduler: Discovery engine not initialized, skipping job.")
+        return
+
     try:
-        run_library_grower_cycle()
-        logger.info("Scheduler: Library Grower cycle job completed successfully.")
+        discovery_engine_global.run_discovery_cycle()
+        logger.info(
+            "Scheduler: Library Grower discovery cycle job completed successfully."
+        )
     except Exception as e:
-        logger.exception(f"Scheduler: Error during Library Grower job execution: {e}")
+        logger.exception(
+            f"Scheduler: Error during Library Grower discovery job execution: {e}"
+        )
 
 
 if __name__ == "__main__":
