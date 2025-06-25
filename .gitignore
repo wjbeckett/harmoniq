@@ -10,3 +10,7 @@ venv/
 
 # Docker
 docker-compose.override.yml
+
+config/
+
+logs/
