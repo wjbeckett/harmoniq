@@ -13,7 +13,7 @@ from .main import (
     run_harmoniq_flow_update,
     get_active_period_details,
 )
-from .discovery_library_grower import DiscoveryLibraryGrower
+from .discovery_library_grower import AlbumDiscoveryEngine
 from .lidarr_client import LidarrClient
 from .plex_client import PlexClient
 from .lastfm_client import LastfmClient
@@ -72,7 +72,7 @@ def initialize_global_clients_and_libs():
             logger.error("Scheduler: Plex client failed to initialize.")
         lastfm_client_global = LastfmClient()
         lidarr_client = LidarrClient()
-        discovery_engine_global = DiscoveryLibraryGrower(
+        discovery_engine_global = AlbumDiscoveryEngine(
             config, lastfm_client_global, lidarr_client
         )
         logger.info("Scheduler: Discovery engine initialized successfully.")

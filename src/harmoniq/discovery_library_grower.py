@@ -1,4 +1,3 @@
-
 """
 Modified Library Grower for Album Discovery
 Finds potential albums and stores them as recommendations for user approval
@@ -10,11 +9,12 @@ from datetime import datetime
 import logging
 
 from .recommendation_storage import AlbumRecommendationManager, RecommendationStatus
-from .lastfm_client import LastFMClient
+from .lastfm_client import LastfmClient
 from .musicbrainz_client import MusicBrainzClient
 from .lidarr_client import LidarrClient
 
 logger = logging.getLogger(__name__)
+
 
 class AlbumDiscoveryEngine:
     """Discovers new albums and stores them as recommendations."""
@@ -25,14 +25,12 @@ class AlbumDiscoveryEngine:
         self.recommendation_manager = AlbumRecommendationManager(config.CONFIG_DIR)
 
         # Initialize clients
-        self.lastfm_client = LastFMClient(
-            api_key=config.LASTFM_API_KEY,
-            username=config.LASTFM_USERNAME
+        self.lastfm_client = LastfmClient(
+            api_key=config.LASTFM_API_KEY, username=config.LASTFM_USERNAME
         )
         self.musicbrainz_client = MusicBrainzClient()
         self.lidarr_client = LidarrClient(
-            base_url=config.LIDARR_URL,
-            api_key=config.LIDARR_API_KEY
+            base_url=config.LIDARR_URL, api_key=config.LIDARR_API_KEY
         )
 
     async def run_discovery_cycle(self) -> Dict[str, Any]:
@@ -46,13 +44,15 @@ class AlbumDiscoveryEngine:
             "errors": [],
             "artists_processed": 0,
             "similar_artists_found": 0,
-            "albums_filtered": 0
+            "albums_filtered": 0,
         }
 
         try:
             # Update stats
             if self.stats_tracker:
-                self.stats_tracker.record_activity("Starting album discovery cycle", "discovery")
+                self.stats_tracker.record_activity(
+                    "Starting album discovery cycle", "discovery"
+                )
 
             # Get user's top artists from Last.fm
             logger.info("Fetching top artists from Last.fm...")
@@ -72,10 +72,16 @@ class AlbumDiscoveryEngine:
                 try:
                     similar = await self._get_similar_artists(artist["name"])
                     all_similar_artists.update(similar)
-                    logger.debug(f"Found {len(similar)} similar artists for {artist['name']}")
+                    logger.debug(
+                        f"Found {len(similar)} similar artists for {artist['name']}"
+                    )
                 except Exception as e:
-                    logger.error(f"Error finding similar artists for {artist['name']}: {e}")
-                    discovery_results["errors"].append(f"Similar artists error for {artist['name']}: {str(e)}")
+                    logger.error(
+                        f"Error finding similar artists for {artist['name']}: {e}"
+                    )
+                    discovery_results["errors"].append(
+                        f"Similar artists error for {artist['name']}: {str(e)}"
+                    )
 
             discovery_results["similar_artists_found"] = len(all_similar_artists)
             logger.info(f"Found {len(all_similar_artists)} unique similar artists")
@@ -89,14 +95,18 @@ class AlbumDiscoveryEngine:
                     logger.debug(f"Found {len(albums)} albums for {artist_name}")
                 except Exception as e:
                     logger.error(f"Error getting albums for {artist_name}: {e}")
-                    discovery_results["errors"].append(f"Albums error for {artist_name}: {str(e)}")
+                    discovery_results["errors"].append(
+                        f"Albums error for {artist_name}: {str(e)}"
+                    )
 
             discovery_results["albums_discovered"] = len(discovered_albums)
             logger.info(f"Discovered {len(discovered_albums)} total albums")
 
             # Filter albums (remove duplicates, already owned, etc.)
             filtered_albums = await self._filter_albums(discovered_albums)
-            discovery_results["albums_filtered"] = len(discovered_albums) - len(filtered_albums)
+            discovery_results["albums_filtered"] = len(discovered_albums) - len(
+                filtered_albums
+            )
 
             logger.info(f"After filtering: {len(filtered_albums)} new albums")
 
@@ -108,32 +118,44 @@ class AlbumDiscoveryEngine:
                     enhanced_album = await self._enhance_album_metadata(album)
 
                     # Add to recommendations
-                    album_id = self.recommendation_manager.add_recommendation(enhanced_album)
+                    album_id = self.recommendation_manager.add_recommendation(
+                        enhanced_album
+                    )
                     if album_id:
                         new_recommendations += 1
-                        logger.debug(f"Added recommendation: {album['artist']} - {album['title']}")
+                        logger.debug(
+                            f"Added recommendation: {album['artist']} - {album['title']}"
+                        )
 
                 except Exception as e:
-                    logger.error(f"Error adding recommendation for {album.get('artist')} - {album.get('title')}: {e}")
-                    discovery_results["errors"].append(f"Recommendation error: {str(e)}")
+                    logger.error(
+                        f"Error adding recommendation for {album.get('artist')} - {album.get('title')}: {e}"
+                    )
+                    discovery_results["errors"].append(
+                        f"Recommendation error: {str(e)}"
+                    )
 
             discovery_results["new_recommendations"] = new_recommendations
 
             # Update stats
             if self.stats_tracker:
                 self.stats_tracker.record_activity(
-                    f"Discovery complete: {new_recommendations} new recommendations", 
-                    "discovery"
+                    f"Discovery complete: {new_recommendations} new recommendations",
+                    "discovery",
                 )
 
-            logger.info(f"Discovery cycle complete: {new_recommendations} new recommendations")
+            logger.info(
+                f"Discovery cycle complete: {new_recommendations} new recommendations"
+            )
 
         except Exception as e:
             logger.error(f"Discovery cycle failed: {e}")
             discovery_results["errors"].append(f"Discovery cycle error: {str(e)}")
 
             if self.stats_tracker:
-                self.stats_tracker.record_activity(f"Discovery cycle failed: {str(e)}", "error")
+                self.stats_tracker.record_activity(
+                    f"Discovery cycle failed: {str(e)}", "error"
+                )
 
         discovery_results["completed_at"] = datetime.now().isoformat()
         return discovery_results
@@ -147,8 +169,8 @@ class AlbumDiscoveryEngine:
 
             for period in periods:
                 artists = await self.lastfm_client.get_top_artists(
-                    period=period, 
-                    limit=self.config.LIBRARY_GROWER.get("top_artists_limit", 20)
+                    period=period,
+                    limit=self.config.LIBRARY_GROWER.get("top_artists_limit", 20),
                 )
                 all_artists.extend(artists)
 
@@ -160,7 +182,9 @@ class AlbumDiscoveryEngine:
                     seen.add(artist["name"])
                     unique_artists.append(artist)
 
-            return unique_artists[:self.config.LIBRARY_GROWER.get("max_top_artists", 50)]
+            return unique_artists[
+                : self.config.LIBRARY_GROWER.get("max_top_artists", 50)
+            ]
 
         except Exception as e:
             logger.error(f"Error getting top artists: {e}")
@@ -170,8 +194,8 @@ class AlbumDiscoveryEngine:
         """Get similar artists from Last.fm."""
         try:
             similar_artists = await self.lastfm_client.get_similar_artists(
-                artist_name, 
-                limit=self.config.LIBRARY_GROWER.get("similar_artists_limit", 10)
+                artist_name,
+                limit=self.config.LIBRARY_GROWER.get("similar_artists_limit", 10),
             )
             return [artist["name"] for artist in similar_artists]
         except Exception as e:
@@ -188,14 +212,16 @@ class AlbumDiscoveryEngine:
             studio_albums = []
             for album in albums:
                 if album.get("type", "").lower() in ["album", "studio"]:
-                    studio_albums.append({
-                        "title": album["title"],
-                        "artist": artist_name,
-                        "year": album.get("year"),
-                        "mbid": album.get("mbid"),
-                        "type": album.get("type", "album"),
-                        "source": "musicbrainz_discovery"
-                    })
+                    studio_albums.append(
+                        {
+                            "title": album["title"],
+                            "artist": artist_name,
+                            "year": album.get("year"),
+                            "mbid": album.get("mbid"),
+                            "type": album.get("type", "album"),
+                            "source": "musicbrainz_discovery",
+                        }
+                    )
 
             return studio_albums
 
@@ -203,21 +229,31 @@ class AlbumDiscoveryEngine:
             logger.error(f"Error getting albums for {artist_name}: {e}")
             return []
 
-    async def _filter_albums(self, albums: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def _filter_albums(
+        self, albums: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Filter out albums that shouldn't be recommended."""
         filtered = []
 
         # Get existing Lidarr albums to avoid duplicates
         try:
             existing_albums = await self.lidarr_client.get_all_albums()
-            existing_titles = {f"{album['artist']}_{album['title']}".lower() for album in existing_albums}
+            existing_titles = {
+                f"{album['artist']}_{album['title']}".lower()
+                for album in existing_albums
+            }
         except Exception as e:
             logger.warning(f"Could not fetch existing Lidarr albums: {e}")
             existing_titles = set()
 
         # Get existing recommendations to avoid duplicates
-        existing_recommendations = self.recommendation_manager.get_recommendations_by_status()
-        existing_rec_titles = {f"{rec['artist']}_{rec['title']}".lower() for rec in existing_recommendations}
+        existing_recommendations = (
+            self.recommendation_manager.get_recommendations_by_status()
+        )
+        existing_rec_titles = {
+            f"{rec['artist']}_{rec['title']}".lower()
+            for rec in existing_recommendations
+        }
 
         for album in albums:
             album_key = f"{album['artist']}_{album['title']}".lower()
@@ -251,23 +287,26 @@ class AlbumDiscoveryEngine:
         try:
             # Add cover art URL
             if album.get("mbid"):
-                enhanced["cover_art_url"] = f"https://coverartarchive.org/release/{album['mbid']}/front-250"
+                enhanced["cover_art_url"] = (
+                    f"https://coverartarchive.org/release/{album['mbid']}/front-250"
+                )
 
             # Add Last.fm data if available
             try:
                 lastfm_album = await self.lastfm_client.get_album_info(
-                    album["artist"], 
-                    album["title"]
+                    album["artist"], album["title"]
                 )
                 if lastfm_album:
                     enhanced["external_ratings"] = {
                         "lastfm_listeners": lastfm_album.get("listeners"),
                         "lastfm_playcount": lastfm_album.get("playcount"),
-                        "lastfm_tags": lastfm_album.get("tags", [])
+                        "lastfm_tags": lastfm_album.get("tags", []),
                     }
                     enhanced["tags"] = lastfm_album.get("tags", [])
             except Exception as e:
-                logger.debug(f"Could not get Last.fm data for {album['artist']} - {album['title']}: {e}")
+                logger.debug(
+                    f"Could not get Last.fm data for {album['artist']} - {album['title']}: {e}"
+                )
 
             # Calculate similarity score (placeholder - could be enhanced)
             enhanced["similarity_score"] = 0.8  # Default high similarity
@@ -286,7 +325,7 @@ class AlbumDiscoveryEngine:
             "processed": 0,
             "successful": 0,
             "failed": 0,
-            "errors": []
+            "errors": [],
         }
 
         try:
@@ -303,8 +342,7 @@ class AlbumDiscoveryEngine:
                 try:
                     # Update status to processing
                     self.recommendation_manager.update_recommendation_status(
-                        recommendation["id"], 
-                        RecommendationStatus.PROCESSING
+                        recommendation["id"], RecommendationStatus.PROCESSING
                     )
 
                     # Add to Lidarr
@@ -313,8 +351,7 @@ class AlbumDiscoveryEngine:
                     if success:
                         # Update status to added
                         self.recommendation_manager.update_recommendation_status(
-                            recommendation["id"], 
-                            RecommendationStatus.ADDED
+                            recommendation["id"], RecommendationStatus.ADDED
                         )
 
                         # Add to recently added (for the ribbon)
@@ -322,31 +359,39 @@ class AlbumDiscoveryEngine:
                             self.stats_tracker.record_album_added(recommendation)
 
                         results["successful"] += 1
-                        logger.info(f"Successfully added: {recommendation['artist']} - {recommendation['title']}")
+                        logger.info(
+                            f"Successfully added: {recommendation['artist']} - {recommendation['title']}"
+                        )
 
                     else:
                         # Update status to failed
                         self.recommendation_manager.update_recommendation_status(
-                            recommendation["id"], 
+                            recommendation["id"],
                             RecommendationStatus.FAILED,
-                            error_message="Failed to add to Lidarr"
+                            error_message="Failed to add to Lidarr",
                         )
                         results["failed"] += 1
-                        results["errors"].append(f"Failed to add: {recommendation['artist']} - {recommendation['title']}")
+                        results["errors"].append(
+                            f"Failed to add: {recommendation['artist']} - {recommendation['title']}"
+                        )
 
                 except Exception as e:
-                    logger.error(f"Error processing recommendation {recommendation['id']}: {e}")
+                    logger.error(
+                        f"Error processing recommendation {recommendation['id']}: {e}"
+                    )
                     self.recommendation_manager.update_recommendation_status(
-                        recommendation["id"], 
+                        recommendation["id"],
                         RecommendationStatus.FAILED,
-                        error_message=str(e)
+                        error_message=str(e),
                     )
                     results["failed"] += 1
                     results["errors"].append(f"Processing error: {str(e)}")
 
                 results["processed"] += 1
 
-            logger.info(f"Processing complete: {results['successful']} successful, {results['failed']} failed")
+            logger.info(
+                f"Processing complete: {results['successful']} successful, {results['failed']} failed"
+            )
 
         except Exception as e:
             logger.error(f"Error processing approved recommendations: {e}")
@@ -362,7 +407,7 @@ class AlbumDiscoveryEngine:
             success = await self.lidarr_client.add_album(
                 artist_name=recommendation["artist"],
                 album_title=recommendation["title"],
-                musicbrainz_id=recommendation.get("mbid")
+                musicbrainz_id=recommendation.get("mbid"),
             )
             return success
         except Exception as e:
