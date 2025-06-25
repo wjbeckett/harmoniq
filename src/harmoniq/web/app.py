@@ -11,6 +11,11 @@ import os
 from pathlib import Path
 
 from .routes import dashboard, status, recommendations_api
+from ..recommendation_storage import AlbumRecommendationManager
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -23,6 +28,17 @@ def create_app() -> FastAPI:
         docs_url="/api/docs",
         redoc_url="/api/redoc",
     )
+
+    # Initialize recommendation manager for web app
+    try:
+        from .. import config  # Import your config
+
+        recommendation_manager = AlbumRecommendationManager()
+        app.state.recommendation_manager = recommendation_manager
+        logger.info("Web app: Recommendation manager initialized successfully")
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize recommendation manager: {e}")
+        app.state.recommendation_manager = None
 
     # Get the web directory path
     web_dir = Path(__file__).parent

@@ -42,25 +42,36 @@ class DiscoveryRequest(BaseModel):
     force_refresh: bool = False
 
 
-# Global instances (will be initialized in main app)
-recommendation_manager: Optional[AlbumRecommendationManager] = None
-discovery_engine: Optional[AlbumDiscoveryEngine] = None
+from fastapi import APIRouter, HTTPException, Query, Request
 
 
-def init_recommendations_api(config, stats_tracker=None):
-    """Initialize the recommendations API with config and dependencies."""
-    global recommendation_manager, discovery_engine
-    recommendation_manager = AlbumRecommendationManager(config.CONFIG_DIR)
-    discovery_engine = AlbumDiscoveryEngine(config, stats_tracker)
+def get_recommendation_manager(request: Request) -> AlbumRecommendationManager:
+    """Get recommendation manager from app state."""
+    manager = getattr(request.app.state, "recommendation_manager", None)
+    if not manager:
+        raise HTTPException(
+            status_code=500, detail="Recommendation manager not initialized"
+        )
+    return manager
+
+
+def get_discovery_engine(request: Request) -> AlbumDiscoveryEngine:
+    """Get discovery engine from app state."""
+    engine = getattr(request.app.state, "discovery_engine", None)
+    if not engine:
+        raise HTTPException(status_code=500, detail="Discovery engine not initialized")
+    return engine
 
 
 @router.get("/pending", response_model=List[RecommendationResponse])
 async def get_pending_recommendations(
+    request: Request,
     limit: int = Query(50, ge=1, le=200),
     search: Optional[str] = Query(None, min_length=1),
 ) -> List[Dict[str, Any]]:
     """Get pending recommendations for user review."""
     try:
+        recommendation_manager = get_recommendation_manager(request)
         if not recommendation_manager:
             raise HTTPException(
                 status_code=500, detail="Recommendation manager not initialized"
@@ -86,12 +97,14 @@ async def get_pending_recommendations(
 
 @router.get("/all")
 async def get_all_recommendations(
+    request: Request,
     status: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     search: Optional[str] = Query(None),
 ) -> List[Dict[str, Any]]:
     """Get all recommendations with optional filtering."""
     try:
+        recommendation_manager = get_recommendation_manager(request)
         if not recommendation_manager:
             raise HTTPException(
                 status_code=500, detail="Recommendation manager not initialized"
@@ -129,10 +142,11 @@ async def get_all_recommendations(
 
 @router.post("/update-status/{album_id}")
 async def update_recommendation_status(
-    album_id: str, status: str, user_notes: Optional[str] = ""
+    request: Request, album_id: str, status: str, user_notes: Optional[str] = ""
 ) -> Dict[str, Any]:
     """Update the status of a single recommendation."""
     try:
+        recommendation_manager = get_recommendation_manager(request)
         if not recommendation_manager:
             raise HTTPException(
                 status_code=500, detail="Recommendation manager not initialized"
@@ -166,78 +180,64 @@ async def update_recommendation_status(
 
 
 @router.post("/bulk-update")
-async def bulk_update_recommendations(request: BulkUpdateRequest) -> Dict[str, Any]:
+async def bulk_update_recommendations(
+    request: Request, bulk_request: BulkUpdateRequest
+) -> Dict[str, Any]:
     """Update multiple recommendations at once."""
-    try:
-        if not recommendation_manager:
-            raise HTTPException(
-                status_code=500, detail="Recommendation manager not initialized"
-            )
-
-        # Validate status
-        try:
-            status_enum = RecommendationStatus(request.status)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid status: {request.status}"
-            )
-
-        results = recommendation_manager.bulk_update_status(
-            request.album_ids, status_enum, request.user_notes
-        )
-
-        successful = sum(1 for success in results.values() if success)
-        failed = len(results) - successful
-
-        return {
-            "success": True,
-            "message": f"Updated {successful} recommendations, {failed} failed",
-            "total_processed": len(request.album_ids),
-            "successful": successful,
-            "failed": failed,
-            "results": results,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error bulk updating recommendations: {e}")
+    recommendation_manager = get_recommendation_manager(request)
+    if not recommendation_manager:
         raise HTTPException(
-            status_code=500, detail="Failed to bulk update recommendations"
+            status_code=500, detail="Recommendation manager not initialized"
         )
+
+    # Validate status
+    try:
+        status_enum = RecommendationStatus(bulk_request.status)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status: {bulk_request.status}"
+        )
+
+    user_notes = bulk_request.user_notes if bulk_request.user_notes is not None else ""
+    results = recommendation_manager.bulk_update_status(
+        bulk_request.album_ids, status_enum, user_notes
+    )
+
+    successful = sum(1 for success in results.values() if success)
+    failed = len(results) - successful
+
+    return {
+        "success": True,
+        "message": f"Updated {successful} recommendations, {failed} failed",
+        "total_processed": len(bulk_request.album_ids),
+        "successful": successful,
+        "failed": failed,
+        "results": results,
+    }
 
 
 @router.post("/discover")
-async def trigger_discovery(request: DiscoveryRequest) -> Dict[str, Any]:
+async def trigger_discovery(
+    request: Request, discovery_request: DiscoveryRequest
+) -> Dict[str, Any]:
     """Trigger album discovery process."""
-    try:
-        if not discovery_engine:
-            raise HTTPException(
-                status_code=500, detail="Discovery engine not initialized"
-            )
+    discovery_engine = get_discovery_engine(request)
 
-        logger.info("Manual discovery triggered via API")
-        results = await discovery_engine.run_discovery_cycle()
+    logger.info("Manual discovery triggered via API")
+    results = await discovery_engine.run_discovery_cycle()
 
-        return {
-            "success": True,
-            "message": f"Discovery complete: {results['new_recommendations']} new recommendations",
-            "results": results,
-        }
-
-    except Exception as e:
-        logger.error(f"Error triggering discovery: {e}")
-        raise HTTPException(status_code=500, detail="Failed to trigger discovery")
+    return {
+        "success": True,
+        "message": f"Discovery complete: {results['new_recommendations']} new recommendations",
+        "results": results,
+    }
 
 
 @router.post("/process-approved")
-async def process_approved_recommendations() -> Dict[str, Any]:
+async def process_approved_recommendations(request: Request) -> Dict[str, Any]:
     """Process approved recommendations by adding them to Lidarr."""
     try:
-        if not discovery_engine:
-            raise HTTPException(
-                status_code=500, detail="Discovery engine not initialized"
-            )
+        discovery_engine = get_discovery_engine(request)
 
         logger.info("Processing approved recommendations via API")
         results = await discovery_engine.process_approved_recommendations()
@@ -256,9 +256,10 @@ async def process_approved_recommendations() -> Dict[str, Any]:
 
 
 @router.get("/statistics")
-async def get_recommendation_statistics() -> Dict[str, Any]:
+async def get_recommendation_statistics(request: Request) -> Dict[str, Any]:
     """Get recommendation statistics and analytics."""
     try:
+        recommendation_manager = get_recommendation_manager(request)
         if not recommendation_manager:
             raise HTTPException(
                 status_code=500, detail="Recommendation manager not initialized"
@@ -288,10 +289,11 @@ async def get_recommendation_statistics() -> Dict[str, Any]:
 
 @router.delete("/cleanup")
 async def cleanup_old_recommendations(
-    days_old: int = Query(30, ge=1, le=365)
+    request: Request, days_old: int = Query(30, ge=1, le=365)
 ) -> Dict[str, Any]:
     """Clean up old denied/failed recommendations."""
     try:
+        recommendation_manager = get_recommendation_manager(request)
         if not recommendation_manager:
             raise HTTPException(
                 status_code=500, detail="Recommendation manager not initialized"
@@ -312,9 +314,10 @@ async def cleanup_old_recommendations(
 
 
 @router.get("/preview/{album_id}")
-async def get_album_preview(album_id: str) -> Dict[str, Any]:
+async def get_album_preview(album_id: str, request: Request) -> Dict[str, Any]:
     """Get enhanced preview data for an album."""
     try:
+        recommendation_manager = get_recommendation_manager(request)
         if not recommendation_manager:
             raise HTTPException(
                 status_code=500, detail="Recommendation manager not initialized"
