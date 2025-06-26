@@ -8,6 +8,9 @@ import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
+import requests
+import urllib.parse
+from typing import Optional
 
 from harmoniq import config
 
@@ -17,6 +20,123 @@ from .musicbrainz_client import MusicBrainzClient
 from .lidarr_client import LidarrClient
 
 logger = logging.getLogger(__name__)
+
+
+def get_robust_cover_art_url(mbid: str, artist: str, album: str) -> str:
+    """
+    Get cover art URL from multiple external sources with guaranteed fallback.
+    """
+
+    # Try external sources in order of preference
+    external_url = try_external_cover_sources(mbid, artist, album)
+    if external_url:
+        return external_url
+
+    # Final fallback: High-quality placeholder with album info
+    return generate_placeholder_cover_url(artist, album)
+
+
+def try_external_cover_sources(mbid: str, artist: str, album: str) -> Optional[str]:
+    """Try multiple external cover art sources."""
+
+    # Source 1: Multiple Cover Art Archive URLs
+    cover_archive_urls = [
+        f"https://coverartarchive.org/release/{mbid}/front-250",
+        f"https://coverartarchive.org/release/{mbid}/front-500",
+        f"https://coverartarchive.org/release/{mbid}/front",
+        f"https://coverartarchive.org/release-group/{mbid}/front-250",
+    ]
+
+    for url in cover_archive_urls:
+        if test_url_works(url):
+            logger.info(f"Found Cover Art Archive: {url}")
+            return url
+
+    # Source 2: Spotify Web API (no auth required for search)
+    spotify_url = get_spotify_cover(artist, album)
+    if spotify_url and test_url_works(spotify_url):
+        logger.info(f"Found Spotify cover: {spotify_url}")
+        return spotify_url
+
+    # Source 3: Last.fm API (if available)
+    if hasattr(config, "LASTFM_API_KEY") and config.LASTFM_API_KEY:
+        lastfm_url = get_lastfm_cover(artist, album)
+        if lastfm_url and test_url_works(lastfm_url):
+            logger.info(f"Found Last.fm cover: {lastfm_url}")
+            return lastfm_url
+
+    logger.warning(f"No external cover found for {artist} - {album}")
+    return None
+
+
+def test_url_works(url: str, timeout: int = 5) -> bool:
+    """Test if a URL returns a valid image."""
+    try:
+        response = requests.head(url, timeout=timeout, allow_redirects=True)
+        return response.status_code == 200
+    except Exception as e:
+        logger.debug(f"URL test failed for {url}: {e}")
+        return False
+
+
+def get_spotify_cover(artist: str, album: str) -> Optional[str]:
+    """Get cover from Spotify Web API (no authentication required for search)."""
+    try:
+        # Clean up artist and album names for better search
+        artist_clean = artist.replace("&", "and").strip()
+        album_clean = album.replace("&", "and").strip()
+
+        search_query = f'artist:"{artist_clean}" album:"{album_clean}"'
+        search_url = f"https://api.spotify.com/v1/search?q={urllib.parse.quote(search_query)}&type=album&limit=5"
+
+        headers = {"User-Agent": "Harmoniq/1.0"}
+
+        response = requests.get(search_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            albums = data.get("albums", {}).get("items", [])
+
+            for album_item in albums:
+                images = album_item.get("images", [])
+                if images:
+                    # Prefer medium size images (usually 300x300)
+                    for img in images:
+                        if img.get("height", 0) >= 250:
+                            return img["url"]
+                    # Fallback to any image
+                    return images[0]["url"]
+
+        return None
+    except Exception as e:
+        logger.debug(f"Spotify cover lookup failed for {artist} - {album}: {e}")
+        return None
+
+
+def get_lastfm_cover(artist: str, album: str) -> Optional[str]:
+    """Get cover from Last.fm API."""
+    try:
+        import pylast
+
+        network = pylast.LastFMNetwork(api_key=config.LASTFM_API_KEY)
+        album_obj = network.get_album(artist, album)
+        cover_url = album_obj.get_cover_image(size=pylast.COVER_LARGE)
+        return cover_url if cover_url else None
+    except Exception as e:
+        logger.debug(f"Last.fm cover lookup failed for {artist} - {album}: {e}")
+        return None
+
+
+def generate_placeholder_cover_url(artist: str, album: str) -> str:
+    """Generate a high-quality placeholder cover URL with album info."""
+    # Clean and truncate text for URL
+    artist_short = artist[:25] + "..." if len(artist) > 25 else artist
+    album_short = album[:25] + "..." if len(album) > 25 else album
+
+    # Create readable text
+    text = f"{artist_short}|{album_short}".replace(" ", "+").replace("&", "and")
+
+    # Use a high-quality placeholder service with music theme
+    return f"https://via.placeholder.com/300x300/2c3e50/ecf0f1?text={urllib.parse.quote(text)}"
 
 
 class AlbumDiscoveryEngine:
@@ -334,10 +454,12 @@ class AlbumDiscoveryEngine:
         enhanced = album.copy()
 
         try:
-            # Add cover art URL
+            # Add cover art URL with robust fallback system
             if album.get("mbid"):
-                enhanced["cover_art_url"] = (
-                    f"https://coverartarchive.org/release/{album['mbid']}/front-250"
+                enhanced["cover_art_url"] = get_robust_cover_art_url(
+                    album["mbid"],
+                    album.get("artist", "Unknown Artist"),
+                    album.get("title", "Unknown Album"),
                 )
 
             # Add Last.fm data if available

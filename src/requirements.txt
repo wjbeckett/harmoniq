@@ -9,6 +9,7 @@ plexapi
 musicbrainzngs
 pytz
 Pillow
+pylast
 
 # Web UI dependencies
 fastapi
