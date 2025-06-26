@@ -14,6 +14,7 @@ from .routes import dashboard, status, recommendations_api
 from ..recommendation_storage import AlbumRecommendationManager
 from ..discovery_library_grower import AlbumDiscoveryEngine
 import logging
+from .. import config  # Import your config module
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -32,8 +33,6 @@ def create_app() -> FastAPI:
 
     # Initialize recommendation manager for web app
     try:
-        from .. import config  # Import your config
-
         recommendation_manager = AlbumRecommendationManager()
         app.state.recommendation_manager = recommendation_manager
         logger.info("Web app: Recommendation manager initialized successfully")
@@ -43,17 +42,7 @@ def create_app() -> FastAPI:
 
     # Initialize discovery engine for web app
     try:
-        from ..lastfm_client import LastfmClient
-        from ..lidarr_client import LidarrClient
-        from .. import config  # Import your config
-
-        lastfm_client = LastfmClient(
-            api_key=config.LASTFM_API_KEY, api_user=config.LASTFM_USERNAME
-        )
-        lidarr_client = LidarrClient(
-            base_url=config.LIDARR_URL, api_key=config.LIDARR_API_KEY
-        )
-        discovery_engine = AlbumDiscoveryEngine(config, lastfm_client, lidarr_client)
+        discovery_engine = AlbumDiscoveryEngine(config)
         app.state.discovery_engine = discovery_engine
         logger.info("Web app: Discovery engine initialized successfully")
     except Exception as e:
