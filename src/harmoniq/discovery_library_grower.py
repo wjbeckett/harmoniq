@@ -167,16 +167,19 @@ class AlbumDiscoveryEngine:
     async def _get_top_artists(self) -> List[Dict[str, Any]]:
         """Get user's top artists from Last.fm."""
         try:
+            # Get different time periods for variety
             periods = ["overall", "12month", "6month"]
             all_artists = []
 
             for period in periods:
+                # Use the correct config keys
                 artists = self.lastfm_client.get_user_top_artists(
                     period=period,
-                    limit=self.config.LIBRARY_GROWER.get("top_artists_limit", 20),
+                    limit=self.config.LIBRARY_GROWER_TOP_ARTISTS_COUNT,
                 )
                 all_artists.extend(artists)
 
+            # Remove duplicates while preserving order
             seen = set()
             unique_artists = []
             for artist in all_artists:
@@ -184,9 +187,8 @@ class AlbumDiscoveryEngine:
                     seen.add(artist["name"])
                     unique_artists.append(artist)
 
-            return unique_artists[
-                : self.config.LIBRARY_GROWER.get("max_top_artists", 50)
-            ]
+            # Use the top artists count as max limit too
+            return unique_artists[: self.config.LIBRARY_GROWER_TOP_ARTISTS_COUNT]
 
         except Exception as e:
             logger.error(f"Error getting top artists: {e}")
@@ -197,7 +199,7 @@ class AlbumDiscoveryEngine:
         try:
             similar_artists = self.lastfm_client.get_similar_artists(
                 artist_name=artist_name,
-                limit=self.config.LIBRARY_GROWER.get("similar_artists_limit", 10),
+                limit=self.config.LIBRARY_GROWER_SIMILAR_ARTISTS_PER_TOP_ARTIST,
             )
             return [artist["name"] for artist in similar_artists]
         except Exception as e:
@@ -207,11 +209,13 @@ class AlbumDiscoveryEngine:
     async def _get_artist_albums(self, artist_name: str) -> List[Dict[str, Any]]:
         """Get studio albums for an artist."""
         try:
+            # First get albums from Last.fm
             lastfm_albums = self.lastfm_client.get_artist_top_albums(
                 artist_name=artist_name,
-                limit=self.config.LIBRARY_GROWER.get("max_albums_per_artist", 20),
+                limit=self.config.LIBRARY_GROWER_ALBUMS_PER_SIMILAR_ARTIST,
             )
 
+            # Rest stays the same...
             studio_albums = []
 
             for album in lastfm_albums:
@@ -222,6 +226,7 @@ class AlbumDiscoveryEngine:
                     )
                     continue
 
+                # Use MusicBrainz to check if it's a studio album
                 type_info = (
                     self.musicbrainz_client.get_album_type_by_release_group_mbid(
                         album_mbid
