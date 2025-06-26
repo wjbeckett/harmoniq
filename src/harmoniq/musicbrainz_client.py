@@ -15,18 +15,29 @@ class MusicBrainzClient:
     """Client for interacting with MusicBrainz API."""
 
     # Define album types we want to include (studio albums)
-    DESIRED_PRIMARY_TYPES = {'Album'}
-    DESIRED_SECONDARY_TYPES = {'Studio'}
+    DESIRED_PRIMARY_TYPES = {"Album"}
+    DESIRED_SECONDARY_TYPES = {"Studio"}
 
     # Define album types we want to exclude
-    EXCLUDED_PRIMARY_TYPES = {'Single', 'EP', 'Broadcast', 'Other'}
+    EXCLUDED_PRIMARY_TYPES = {"Single", "EP", "Broadcast", "Other"}
     EXCLUDED_SECONDARY_TYPES = {
-        'Live', 'Compilation', 'Soundtrack', 'Spokenword', 
-        'Interview', 'Audiobook', 'Mixtape/Street', 'Demo'
+        "Live",
+        "Compilation",
+        "Soundtrack",
+        "Spokenword",
+        "Interview",
+        "Audiobook",
+        "Mixtape/Street",
+        "Demo",
     }
 
-    def __init__(self, app_name: str = "Harmoniq", app_version: str = "1.0", 
-                 contact_email: Optional[str] = None, rate_limit_delay: float = 1.0):
+    def __init__(
+        self,
+        app_name: str = "Harmoniq",
+        app_version: str = "1.0",
+        contact_email: Optional[str] = None,
+        rate_limit_delay: float = 1.0,
+    ):
         """
         Initialize MusicBrainz client.
 
@@ -51,7 +62,9 @@ class MusicBrainzClient:
         if self.rate_limit_delay > 0:
             sleep(self.rate_limit_delay)
 
-    def get_album_type_by_release_group_mbid(self, release_group_mbid: str) -> Optional[Dict[str, any]]:
+    def get_album_type_by_release_group_mbid(
+        self, release_group_mbid: str
+    ) -> Optional[Dict[str, any]]:
         """
         Get album type information by MusicBrainz Release Group ID.
 
@@ -76,54 +89,65 @@ class MusicBrainzClient:
 
             # Fetch release group with artist credits
             result = musicbrainzngs.get_release_group_by_id(
-                release_group_mbid, 
-                includes=['artist-credits']
+                release_group_mbid, includes=["artist-credits"]
             )
 
-            if not result or 'release-group' not in result:
+            if not result or "release-group" not in result:
                 logger.warning(f"No release group found for MBID: {release_group_mbid}")
                 return None
 
-            release_group = result['release-group']
+            release_group = result["release-group"]
 
             # Extract type information
-            primary_type = release_group.get('primary-type', '')
-            secondary_types = release_group.get('secondary-type-list', [])
+            primary_type = release_group.get("primary-type", "")
+            secondary_types = release_group.get("secondary-type-list", [])
 
             # Extract basic info
-            title = release_group.get('title', '')
-            artist_name = ''
-            if 'artist-credit' in release_group and release_group['artist-credit']:
-                artist_name = release_group['artist-credit'][0].get('artist', {}).get('name', '')
+            title = release_group.get("title", "")
+            artist_name = ""
+            if "artist-credit" in release_group and release_group["artist-credit"]:
+                artist_name = (
+                    release_group["artist-credit"][0].get("artist", {}).get("name", "")
+                )
 
             # Determine if this is a studio album we want
-            is_studio_album = self._is_desired_studio_album(primary_type, secondary_types)
+            is_studio_album = self._is_desired_studio_album(
+                primary_type, secondary_types
+            )
 
             type_info = {
-                'primary_type': primary_type,
-                'secondary_types': secondary_types,
-                'is_studio_album': is_studio_album,
-                'title': title,
-                'artist': artist_name
+                "primary_type": primary_type,
+                "secondary_types": secondary_types,
+                "is_studio_album": is_studio_album,
+                "title": title,
+                "artist": artist_name,
             }
 
-            logger.debug(f"Album type info for '{title}' by '{artist_name}': "
-                        f"primary={primary_type}, secondary={secondary_types}, "
-                        f"is_studio_album={is_studio_album}")
+            logger.debug(
+                f"Album type info for '{title}' by '{artist_name}': "
+                f"primary={primary_type}, secondary={secondary_types}, "
+                f"is_studio_album={is_studio_album}"
+            )
 
             return type_info
 
         except musicbrainzngs.NetworkError as e:
-            logger.error(f"Network error fetching MusicBrainz data for {release_group_mbid}: {e}")
+            logger.error(
+                f"Network error fetching MusicBrainz data for {release_group_mbid}: {e}"
+            )
             return None
         except musicbrainzngs.ResponseError as e:
             logger.error(f"MusicBrainz API error for {release_group_mbid}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error fetching MusicBrainz data for {release_group_mbid}: {e}")
+            logger.error(
+                f"Unexpected error fetching MusicBrainz data for {release_group_mbid}: {e}"
+            )
             return None
 
-    def _is_desired_studio_album(self, primary_type: str, secondary_types: List[str]) -> bool:
+    def _is_desired_studio_album(
+        self, primary_type: str, secondary_types: List[str]
+    ) -> bool:
         """
         Determine if an album matches our criteria for a studio album.
 
@@ -146,12 +170,12 @@ class MusicBrainzClient:
             return False
 
         # For albums, prefer those explicitly marked as Studio
-        if primary_type == 'Album':
+        if primary_type == "Album":
             # If no secondary types specified, assume it's a studio album
             if not secondary_set:
                 return True
             # If Studio is explicitly listed, it's good
-            if 'Studio' in secondary_set:
+            if "Studio" in secondary_set:
                 return True
             # If it has other secondary types but not excluded ones, it's probably okay
             return True
@@ -172,23 +196,26 @@ class MusicBrainzClient:
         try:
             self._rate_limit()
 
-            logger.debug(f"Fetching release info to get release group MBID for: {album_mbid}")
-
-            result = musicbrainzngs.get_release_by_id(
-                album_mbid, 
-                includes=['release-groups']
+            logger.debug(
+                f"Fetching release info to get release group MBID for: {album_mbid}"
             )
 
-            if not result or 'release' not in result:
+            result = musicbrainzngs.get_release_by_id(
+                album_mbid, includes=["release-groups"]
+            )
+
+            if not result or "release" not in result:
                 logger.warning(f"No release found for MBID: {album_mbid}")
                 return None
 
-            release = result['release']
-            release_group = release.get('release-group', {})
-            release_group_mbid = release_group.get('id')
+            release = result["release"]
+            release_group = release.get("release-group", {})
+            release_group_mbid = release_group.get("id")
 
             if release_group_mbid:
-                logger.debug(f"Found release group MBID {release_group_mbid} for release {album_mbid}")
+                logger.debug(
+                    f"Found release group MBID {release_group_mbid} for release {album_mbid}"
+                )
                 return release_group_mbid
             else:
                 logger.warning(f"No release group found for release {album_mbid}")
@@ -201,10 +228,14 @@ class MusicBrainzClient:
             logger.error(f"MusicBrainz API error for {album_mbid}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error fetching release data for {album_mbid}: {e}")
+            logger.error(
+                f"Unexpected error fetching release data for {album_mbid}: {e}"
+            )
             return None
 
-    def batch_get_album_types(self, release_group_mbids: List[str]) -> Dict[str, Optional[Dict]]:
+    def batch_get_album_types(
+        self, release_group_mbids: List[str]
+    ) -> Dict[str, Optional[Dict]]:
         """
         Get album type information for multiple Release Group MBIDs.
 
@@ -216,13 +247,17 @@ class MusicBrainzClient:
         """
         results = {}
 
-        logger.info(f"Fetching album types for {len(release_group_mbids)} release groups")
+        logger.info(
+            f"Fetching album types for {len(release_group_mbids)} release groups"
+        )
 
         for i, mbid in enumerate(release_group_mbids):
             logger.debug(f"Processing {i+1}/{len(release_group_mbids)}: {mbid}")
             results[mbid] = self.get_album_type_by_release_group_mbid(mbid)
 
         successful_count = sum(1 for v in results.values() if v is not None)
-        logger.info(f"Successfully fetched type info for {successful_count}/{len(release_group_mbids)} albums")
+        logger.info(
+            f"Successfully fetched type info for {successful_count}/{len(release_group_mbids)} albums"
+        )
 
         return results

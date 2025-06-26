@@ -8,6 +8,7 @@ import schedule
 import time
 import signal
 import logging
+import asyncio
 
 from .main import (
     run_harmoniq_flow_update,
@@ -137,7 +138,9 @@ def library_grower_job_wrapper():
         return
 
     try:
-        discovery_engine_global.run_discovery_cycle()
+        import asyncio
+
+        asyncio.run(discovery_engine_global.run_discovery_cycle())
         logger.info(
             "Scheduler: Library Grower discovery cycle job completed successfully."
         )
