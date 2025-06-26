@@ -248,10 +248,8 @@ class HarmoniqDashboard {
     async loadAlbumRibbon() {
         try {
             const [albumsData, statsData] = await Promise.all([
-                window.api.get('/dashboard/test-albums'),  // ← Test endpoint
-                window.api.get('/dashboard/test-album-stats')  // ← Test endpoint
-                //window.api.get('/dashboard/recently-added-albums?limit=15'),
-                //window.api.get('/dashboard/album-stats')
+                window.api.get('/dashboard/recently-added-albums?limit=15'),
+                window.api.get('/dashboard/album-stats')
             ]);
 
             this.updateAlbumRibbon(albumsData);

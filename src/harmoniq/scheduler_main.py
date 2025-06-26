@@ -71,7 +71,7 @@ def initialize_global_clients_and_libs():
         else:
             logger.error("Scheduler: Plex client failed to initialize.")
         lastfm_client_global = LastfmClient()
-        lidarr_client = LidarrClient()
+        lidarr_client = LidarrClient(config.LIDARR_URL, config.LIDARR_API_KEY)
         discovery_engine_global = AlbumDiscoveryEngine(
             config, lastfm_client_global, lidarr_client
         )
