@@ -4,9 +4,12 @@ Finds potential albums and stores them as recommendations for user approval
 """
 
 import asyncio
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
+
+from harmoniq import config
 
 from .recommendation_storage import AlbumRecommendationManager, RecommendationStatus
 from .lastfm_client import LastfmClient
@@ -22,7 +25,8 @@ class AlbumDiscoveryEngine:
     def __init__(self, config, stats_tracker=None):
         self.config = config
         self.stats_tracker = stats_tracker
-        self.recommendation_manager = AlbumRecommendationManager(config.CONFIG_DIR)
+        config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
+        self.recommendation_manager = AlbumRecommendationManager(config_dir)
 
         # Initialize clients
         self.lastfm_client = LastfmClient(
