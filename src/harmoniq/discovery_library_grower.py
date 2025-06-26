@@ -215,7 +215,6 @@ class AlbumDiscoveryEngine:
                 limit=self.config.LIBRARY_GROWER_ALBUMS_PER_SIMILAR_ARTIST,
             )
 
-            # Rest stays the same...
             studio_albums = []
 
             for album in lastfm_albums:
@@ -226,24 +225,56 @@ class AlbumDiscoveryEngine:
                     )
                     continue
 
-                # Use MusicBrainz to check if it's a studio album
-                type_info = (
-                    self.musicbrainz_client.get_album_type_by_release_group_mbid(
+                # First try to get release group MBID from the album MBID
+                release_group_mbid = (
+                    self.musicbrainz_client.get_release_group_mbid_from_album_mbid(
                         album_mbid
                     )
                 )
 
-                if type_info and type_info.get("is_studio_album", False):
-                    studio_albums.append(
-                        {
-                            "title": album["name"],
-                            "artist": artist_name,
-                            "year": None,
-                            "mbid": album_mbid,
-                            "type": "studio",
-                            "source": "lastfm_musicbrainz_discovery",
-                        }
+                if release_group_mbid:
+                    # Now check if it's a studio album using the release group MBID
+                    type_info = (
+                        self.musicbrainz_client.get_album_type_by_release_group_mbid(
+                            release_group_mbid
+                        )
                     )
+
+                    if type_info and type_info.get("is_studio_album", False):
+                        studio_albums.append(
+                            {
+                                "title": album["name"],
+                                "artist": artist_name,
+                                "year": None,
+                                "mbid": release_group_mbid,  # Use release group MBID
+                                "type": "studio",
+                                "source": "lastfm_musicbrainz_discovery",
+                            }
+                        )
+                else:
+                    # If we can't get release group MBID, try the original MBID directly
+                    # (in case Last.fm already provided a release group MBID)
+                    type_info = (
+                        self.musicbrainz_client.get_album_type_by_release_group_mbid(
+                            album_mbid
+                        )
+                    )
+
+                    if type_info and type_info.get("is_studio_album", False):
+                        studio_albums.append(
+                            {
+                                "title": album["name"],
+                                "artist": artist_name,
+                                "year": None,
+                                "mbid": album_mbid,
+                                "type": "studio",
+                                "source": "lastfm_musicbrainz_discovery",
+                            }
+                        )
+                    else:
+                        logger.debug(
+                            f"Could not determine album type for '{album['name']}' by {artist_name} (MBID: {album_mbid})"
+                        )
 
             logger.info(f"Found {len(studio_albums)} studio albums for {artist_name}")
             return studio_albums
