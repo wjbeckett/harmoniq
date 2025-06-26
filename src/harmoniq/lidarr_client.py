@@ -240,3 +240,45 @@ class LidarrClient:
                 f"Failed to add album with MBID {release_group_mbid} to Lidarr"
             )
             return None
+
+    def get_all_albums(self) -> List[Dict]:
+        """
+        Get all albums from Lidarr library.
+
+        Returns:
+            List of album dictionaries
+        """
+        try:
+            result = self._make_request("GET", "album")
+            if result and isinstance(result, list):
+                logger.debug(f"Retrieved {len(result)} albums from Lidarr")
+                return result
+            else:
+                logger.warning("No albums found in Lidarr or request failed")
+                return []
+        except Exception as e:
+            logger.error(f"Error getting albums from Lidarr: {e}")
+            return []
+
+    def get_existing_album_mbids(self) -> set:
+        """
+        Get set of existing album MBIDs in Lidarr library.
+
+        Returns:
+            Set of MusicBrainz Release Group IDs already in library
+        """
+        try:
+            albums = self.get_all_albums()
+            mbids = set()
+
+            for album in albums:
+                foreign_id = album.get("foreignAlbumId")
+                if foreign_id:
+                    mbids.add(foreign_id)
+
+            logger.debug(f"Found {len(mbids)} existing album MBIDs in Lidarr")
+            return mbids
+
+        except Exception as e:
+            logger.error(f"Error getting existing album MBIDs: {e}")
+            return set()

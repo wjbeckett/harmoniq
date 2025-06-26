@@ -320,11 +320,6 @@ class AlbumDiscoveryEngine:
             if album_key in existing_rec_titles:
                 continue
 
-            # Skip if too old (configurable)
-            min_year = self.config.LIBRARY_GROWER.get("min_album_year", 1960)
-            if album.get("year") and album["year"] < min_year:
-                continue
-
             # Skip if too new (might not be available yet)
             max_year = datetime.now().year + 1
             if album.get("year") and album["year"] > max_year:
