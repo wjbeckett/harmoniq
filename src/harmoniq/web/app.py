@@ -45,9 +45,14 @@ def create_app() -> FastAPI:
     try:
         from ..lastfm_client import LastfmClient
         from ..lidarr_client import LidarrClient
+        from .. import config  # Import your config
 
-        lastfm_client = LastfmClient()
-        lidarr_client = LidarrClient()
+        lastfm_client = LastfmClient(
+            api_key=config.LASTFM_API_KEY, api_user=config.LASTFM_USERNAME
+        )
+        lidarr_client = LidarrClient(
+            base_url=config.LIDARR_URL, api_key=config.LIDARR_API_KEY
+        )
         discovery_engine = AlbumDiscoveryEngine(config, lastfm_client, lidarr_client)
         app.state.discovery_engine = discovery_engine
         logger.info("Web app: Discovery engine initialized successfully")

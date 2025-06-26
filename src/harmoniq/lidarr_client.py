@@ -23,19 +23,23 @@ class LidarrClient:
             api_key: Lidarr API key
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers.update({
-            'X-Api-Key': self.api_key,
-            'Content-Type': 'application/json'
-        })
+        self.session.headers.update(
+            {"X-Api-Key": self.api_key, "Content-Type": "application/json"}
+        )
 
         logger.info(f"Initialized Lidarr client for {self.base_url}")
 
-    def _make_request(self, method: str, endpoint: str, params: Optional[Dict] = None, 
-                     json_data: Optional[Dict] = None) -> Optional[Dict]:
+    def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        json_data: Optional[Dict] = None,
+    ) -> Optional[Dict]:
         """
         Make a request to the Lidarr API.
 
@@ -57,7 +61,7 @@ class LidarrClient:
                 url=url,
                 params=params,
                 json=json_data,
-                timeout=self.timeout
+                timeout=self.timeout,
             )
 
             if response.status_code == 200:
@@ -69,7 +73,9 @@ class LidarrClient:
                 logger.debug(f"Resource not found: {url}")
                 return None
             else:
-                logger.error(f"Lidarr API request failed: {response.status_code} - {response.text}")
+                logger.error(
+                    f"Lidarr API request failed: {response.status_code} - {response.text}"
+                )
                 return None
 
         except requests.exceptions.RequestException as e:
@@ -84,9 +90,11 @@ class LidarrClient:
             True if connection successful, False otherwise
         """
         try:
-            result = self._make_request('GET', 'system/status')
+            result = self._make_request("GET", "system/status")
             if result:
-                logger.info(f"Successfully connected to Lidarr v{result.get('version', 'unknown')}")
+                logger.info(
+                    f"Successfully connected to Lidarr v{result.get('version', 'unknown')}"
+                )
                 return True
             else:
                 logger.error("Failed to connect to Lidarr")
@@ -102,7 +110,7 @@ class LidarrClient:
         Returns:
             List of root folder dictionaries
         """
-        result = self._make_request('GET', 'rootfolder')
+        result = self._make_request("GET", "rootfolder")
         return result if result else []
 
     def get_quality_profiles(self) -> List[Dict]:
@@ -112,7 +120,7 @@ class LidarrClient:
         Returns:
             List of quality profile dictionaries
         """
-        result = self._make_request('GET', 'qualityprofile')
+        result = self._make_request("GET", "qualityprofile")
         return result if result else []
 
     def get_metadata_profiles(self) -> List[Dict]:
@@ -122,7 +130,7 @@ class LidarrClient:
         Returns:
             List of metadata profile dictionaries
         """
-        result = self._make_request('GET', 'metadataprofile')
+        result = self._make_request("GET", "metadataprofile")
         return result if result else []
 
     def search_albums_by_mbid(self, release_group_mbid: str) -> Optional[Dict]:
@@ -135,8 +143,8 @@ class LidarrClient:
         Returns:
             Album data if found, None otherwise
         """
-        params = {'term': f'mbid:{release_group_mbid}'}
-        result = self._make_request('GET', 'search', params=params)
+        params = {"term": f"mbid:{release_group_mbid}"}
+        result = self._make_request("GET", "search", params=params)
 
         if result and isinstance(result, list) and len(result) > 0:
             return result[0]  # Return first match
@@ -153,20 +161,28 @@ class LidarrClient:
             True if album exists, False otherwise
         """
         # Get all albums and check for MBID match
-        albums = self._make_request('GET', 'album')
+        albums = self._make_request("GET", "album")
         if not albums:
             return False
 
         for album in albums:
-            if album.get('foreignAlbumId') == release_group_mbid:
-                logger.debug(f"Album with MBID {release_group_mbid} already exists in Lidarr")
+            if album.get("foreignAlbumId") == release_group_mbid:
+                logger.debug(
+                    f"Album with MBID {release_group_mbid} already exists in Lidarr"
+                )
                 return True
 
         return False
 
-    def add_album_by_mbid(self, release_group_mbid: str, root_folder_path: str,
-                         quality_profile_id: int, metadata_profile_id: int,
-                         monitored: bool = True, search_on_add: bool = True) -> Optional[Dict]:
+    def add_album_by_mbid(
+        self,
+        release_group_mbid: str,
+        root_folder_path: str,
+        quality_profile_id: int,
+        metadata_profile_id: int,
+        monitored: bool = True,
+        search_on_add: bool = True,
+    ) -> Optional[Dict]:
         """
         Add an album to Lidarr by MusicBrainz Release Group ID.
 
@@ -184,33 +200,43 @@ class LidarrClient:
         # First, search for the album to get its details
         album_search_result = self.search_albums_by_mbid(release_group_mbid)
         if not album_search_result:
-            logger.error(f"Could not find album with MBID {release_group_mbid} in Lidarr search")
+            logger.error(
+                f"Could not find album with MBID {release_group_mbid} in Lidarr search"
+            )
             return None
 
         # Check if album already exists
         if self.album_exists_in_library(release_group_mbid):
-            logger.info(f"Album with MBID {release_group_mbid} already exists in Lidarr")
+            logger.info(
+                f"Album with MBID {release_group_mbid} already exists in Lidarr"
+            )
             return None
 
         # Prepare the album data for adding
         album_data = {
-            'foreignAlbumId': release_group_mbid,
-            'title': album_search_result.get('title', ''),
-            'artist': album_search_result.get('artist', {}),
-            'rootFolderPath': root_folder_path,
-            'qualityProfileId': quality_profile_id,
-            'metadataProfileId': metadata_profile_id,
-            'monitored': monitored,
-            'searchForMissingAlbums': search_on_add
+            "foreignAlbumId": release_group_mbid,
+            "title": album_search_result.get("title", ""),
+            "artist": album_search_result.get("artist", {}),
+            "rootFolderPath": root_folder_path,
+            "qualityProfileId": quality_profile_id,
+            "metadataProfileId": metadata_profile_id,
+            "monitored": monitored,
+            "searchForMissingAlbums": search_on_add,
         }
 
-        logger.info(f"Adding album '{album_data['title']}' by '{album_data['artist'].get('artistName', 'Unknown')}' to Lidarr")
+        logger.info(
+            f"Adding album '{album_data['title']}' by '{album_data['artist'].get('artistName', 'Unknown')}' to Lidarr"
+        )
 
-        result = self._make_request('POST', 'album', json_data=album_data)
+        result = self._make_request("POST", "album", json_data=album_data)
 
         if result:
-            logger.info(f"Successfully added album with MBID {release_group_mbid} to Lidarr")
+            logger.info(
+                f"Successfully added album with MBID {release_group_mbid} to Lidarr"
+            )
             return result
         else:
-            logger.error(f"Failed to add album with MBID {release_group_mbid} to Lidarr")
+            logger.error(
+                f"Failed to add album with MBID {release_group_mbid} to Lidarr"
+            )
             return None

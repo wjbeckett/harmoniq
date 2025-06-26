@@ -26,7 +26,7 @@ class AlbumDiscoveryEngine:
 
         # Initialize clients
         self.lastfm_client = LastfmClient(
-            api_key=config.LASTFM_API_KEY, username=config.LASTFM_USERNAME
+            api_key=config.LASTFM_API_KEY, api_user=config.LASTFM_USERNAME
         )
         self.musicbrainz_client = MusicBrainzClient()
         self.lidarr_client = LidarrClient(
