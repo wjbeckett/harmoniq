@@ -167,18 +167,16 @@ class AlbumDiscoveryEngine:
     async def _get_top_artists(self) -> List[Dict[str, Any]]:
         """Get user's top artists from Last.fm."""
         try:
-            # Get different time periods for variety
             periods = ["overall", "12month", "6month"]
             all_artists = []
 
             for period in periods:
-                artists = await self.lastfm_client.get_top_artists(
+                artists = self.lastfm_client.get_user_top_artists(
                     period=period,
                     limit=self.config.LIBRARY_GROWER.get("top_artists_limit", 20),
                 )
                 all_artists.extend(artists)
 
-            # Remove duplicates while preserving order
             seen = set()
             unique_artists = []
             for artist in all_artists:
@@ -197,8 +195,8 @@ class AlbumDiscoveryEngine:
     async def _get_similar_artists(self, artist_name: str) -> List[str]:
         """Get similar artists from Last.fm."""
         try:
-            similar_artists = await self.lastfm_client.get_similar_artists(
-                artist_name,
+            similar_artists = self.lastfm_client.get_similar_artists(
+                artist_name=artist_name,
                 limit=self.config.LIBRARY_GROWER.get("similar_artists_limit", 10),
             )
             return [artist["name"] for artist in similar_artists]
@@ -209,24 +207,40 @@ class AlbumDiscoveryEngine:
     async def _get_artist_albums(self, artist_name: str) -> List[Dict[str, Any]]:
         """Get studio albums for an artist."""
         try:
-            # Get albums from MusicBrainz
-            albums = await self.musicbrainz_client.get_artist_albums(artist_name)
+            lastfm_albums = self.lastfm_client.get_artist_top_albums(
+                artist_name=artist_name,
+                limit=self.config.LIBRARY_GROWER.get("max_albums_per_artist", 20),
+            )
 
-            # Filter for studio albums only
             studio_albums = []
-            for album in albums:
-                if album.get("type", "").lower() in ["album", "studio"]:
+
+            for album in lastfm_albums:
+                album_mbid = album.get("mbid")
+                if not album_mbid:
+                    logger.debug(
+                        f"No MBID for album '{album['name']}' by {artist_name}, skipping type check"
+                    )
+                    continue
+
+                type_info = (
+                    self.musicbrainz_client.get_album_type_by_release_group_mbid(
+                        album_mbid
+                    )
+                )
+
+                if type_info and type_info.get("is_studio_album", False):
                     studio_albums.append(
                         {
-                            "title": album["title"],
+                            "title": album["name"],
                             "artist": artist_name,
-                            "year": album.get("year"),
-                            "mbid": album.get("mbid"),
-                            "type": album.get("type", "album"),
-                            "source": "musicbrainz_discovery",
+                            "year": None,
+                            "mbid": album_mbid,
+                            "type": "studio",
+                            "source": "lastfm_musicbrainz_discovery",
                         }
                     )
 
+            logger.info(f"Found {len(studio_albums)} studio albums for {artist_name}")
             return studio_albums
 
         except Exception as e:
