@@ -411,7 +411,7 @@ class AlbumDiscoveryEngine:
 
         # Get existing Lidarr albums to avoid duplicates
         try:
-            existing_albums = await self.lidarr_client.get_all_albums()
+            existing_albums = self.lidarr_client.get_all_albums()
             existing_titles = {
                 f"{album['artist']}_{album['title']}".lower()
                 for album in existing_albums
