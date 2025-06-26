@@ -325,6 +325,31 @@ async def get_album_preview(album_id: str, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Failed to fetch album preview")
 
 
+@router.get("/debug")
+async def debug_manager(request: Request):
+    """Debug endpoint to check manager state."""
+    manager = getattr(request.app.state, "recommendation_manager", None)
+
+    if not manager:
+        return {"error": "No manager found"}
+
+    import os
+
+    return {
+        "manager_exists": manager is not None,
+        "file_path": manager.recommendations_file,
+        "file_exists": os.path.exists(manager.recommendations_file),
+        "file_readable": os.access(manager.recommendations_file, os.R_OK),
+        "file_size": (
+            os.path.getsize(manager.recommendations_file)
+            if os.path.exists(manager.recommendations_file)
+            else 0
+        ),
+        "manager_stats": manager.get_statistics(),
+        "pending_count": len(manager.get_pending_recommendations()),
+    }
+
+
 def _calculate_relative_time(iso_date_string: str) -> str:
     """Calculate relative time from ISO date string."""
     try:
