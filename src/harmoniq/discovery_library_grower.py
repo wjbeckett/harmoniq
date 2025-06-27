@@ -1,6 +1,6 @@
 """
-Modified Library Grower for Album Discovery
-Finds potential albums and stores them as recommendations for user approval
+Modified Library Grower for Album Discovery - SQLite Version
+Enhanced discovery engine with SQLite integration and all original functionality
 """
 
 import asyncio
@@ -14,7 +14,7 @@ from typing import Optional
 
 from harmoniq import config
 
-from .recommendation_storage import AlbumRecommendationManager, RecommendationStatus
+from .recommendation_manager import AlbumRecommendationManager, StatsTracker, RecommendationStatus
 from .lastfm_client import LastfmClient
 from .musicbrainz_client import MusicBrainzClient
 from .lidarr_client import LidarrClient
@@ -140,13 +140,20 @@ def generate_placeholder_cover_url(artist: str, album: str) -> str:
 
 
 class AlbumDiscoveryEngine:
-    """Discovers new albums and stores them as recommendations."""
+    """Discovers new albums and stores them as recommendations using SQLite."""
 
     def __init__(self, config, stats_tracker=None):
         self.config = config
-        self.stats_tracker = stats_tracker
+
+        # Initialize SQLite-based systems
         config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
         self.recommendation_manager = AlbumRecommendationManager(config_dir)
+
+        # Use provided stats tracker or create new one
+        if stats_tracker:
+            self.stats_tracker = stats_tracker
+        else:
+            self.stats_tracker = StatsTracker(config_dir)
 
         # Initialize clients
         self.lastfm_client = LastfmClient(
@@ -158,8 +165,11 @@ class AlbumDiscoveryEngine:
         )
 
     async def run_discovery_cycle(self) -> Dict[str, Any]:
-        """Run a complete album discovery cycle."""
+        """Run a complete album discovery cycle with SQLite tracking."""
         logger.info("Starting album discovery cycle...")
+
+        # Start discovery run tracking in database
+        run_id = self.recommendation_manager.db.start_discovery_run()
 
         discovery_results = {
             "started_at": datetime.now().isoformat(),
@@ -169,14 +179,14 @@ class AlbumDiscoveryEngine:
             "artists_processed": 0,
             "similar_artists_found": 0,
             "albums_filtered": 0,
+            "run_id": run_id
         }
 
         try:
             # Update stats
-            if self.stats_tracker:
-                self.stats_tracker.record_activity(
-                    "Starting album discovery cycle", "discovery"
-                )
+            self.stats_tracker.record_activity(
+                "Starting album discovery cycle", "discovery"
+            )
 
             # Get user's top artists from Last.fm
             logger.info("Fetching top artists from Last.fm...")
@@ -241,7 +251,7 @@ class AlbumDiscoveryEngine:
                     # Enhance album data with additional metadata
                     enhanced_album = await self._enhance_album_metadata(album)
 
-                    # Add to recommendations
+                    # Add to recommendations using SQLite system
                     album_id = self.recommendation_manager.add_recommendation(
                         enhanced_album
                     )
@@ -262,11 +272,10 @@ class AlbumDiscoveryEngine:
             discovery_results["new_recommendations"] = new_recommendations
 
             # Update stats
-            if self.stats_tracker:
-                self.stats_tracker.record_activity(
-                    f"Discovery complete: {new_recommendations} new recommendations",
-                    "discovery",
-                )
+            self.stats_tracker.record_activity(
+                f"Discovery complete: {new_recommendations} new recommendations",
+                "discovery",
+            )
 
             logger.info(
                 f"Discovery cycle complete: {new_recommendations} new recommendations"
@@ -276,12 +285,15 @@ class AlbumDiscoveryEngine:
             logger.error(f"Discovery cycle failed: {e}")
             discovery_results["errors"].append(f"Discovery cycle error: {str(e)}")
 
-            if self.stats_tracker:
-                self.stats_tracker.record_activity(
-                    f"Discovery cycle failed: {str(e)}", "error"
-                )
+            self.stats_tracker.record_activity(
+                f"Discovery cycle failed: {str(e)}", "error"
+            )
 
-        discovery_results["completed_at"] = datetime.now().isoformat()
+        finally:
+            # Update discovery run in database
+            discovery_results["completed_at"] = datetime.now().isoformat()
+            self.recommendation_manager.db.update_discovery_run(run_id, discovery_results)
+
         return discovery_results
 
     async def _get_top_artists(self) -> List[Dict[str, Any]]:
@@ -406,7 +418,7 @@ class AlbumDiscoveryEngine:
     async def _filter_albums(
         self, albums: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Filter out albums that shouldn't be recommended."""
+        """Filter out albums that shouldn't be recommended using SQLite cache."""
         filtered = []
 
         # Get existing Lidarr albums to avoid duplicates
@@ -420,7 +432,7 @@ class AlbumDiscoveryEngine:
             logger.warning(f"Could not fetch existing Lidarr albums: {e}")
             existing_titles = set()
 
-        # Get existing recommendations to avoid duplicates
+        # Get existing recommendations from SQLite to avoid duplicates
         existing_recommendations = (
             self.recommendation_manager.get_recommendations_by_status()
         )
@@ -500,7 +512,7 @@ class AlbumDiscoveryEngine:
         }
 
         try:
-            # Get approved recommendations
+            # Get approved recommendations from SQLite
             approved = self.recommendation_manager.get_approved_recommendations()
 
             if not approved:
@@ -525,9 +537,8 @@ class AlbumDiscoveryEngine:
                             recommendation["id"], RecommendationStatus.ADDED
                         )
 
-                        # Add to recently added (for the ribbon)
-                        if self.stats_tracker:
-                            self.stats_tracker.record_album_added(recommendation)
+                        # Add to recently added (for the ribbon) using SQLite
+                        self.stats_tracker.record_album_added(recommendation)
 
                         results["successful"] += 1
                         logger.info(

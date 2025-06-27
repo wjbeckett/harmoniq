@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 from .routes import dashboard, status, recommendations_api
-from ..recommendation_storage import AlbumRecommendationManager
+from ..recommendation_manager import AlbumRecommendationManager, StatsTracker
 from ..discovery_library_grower import AlbumDiscoveryEngine
 import logging
 from .. import config  # Import your config module
@@ -31,18 +31,31 @@ def create_app() -> FastAPI:
         redoc_url="/api/redoc",
     )
 
+    # Get config directory
+    config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
+
     # Initialize recommendation manager for web app
     try:
-        recommendation_manager = AlbumRecommendationManager()
+        recommendation_manager = AlbumRecommendationManager(config_dir)
         app.state.recommendation_manager = recommendation_manager
         logger.info("Web app: Recommendation manager initialized successfully")
     except Exception as e:
         logger.error(f"Web app: Failed to initialize recommendation manager: {e}")
         app.state.recommendation_manager = None
 
+    # Initialize stats tracker for web app
+    stats_tracker = None
+    try:
+        stats_tracker = StatsTracker(config_dir)
+        app.state.stats_tracker = stats_tracker
+        logger.info("Web app: Stats tracker initialized successfully")
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize stats tracker: {e}")
+        app.state.stats_tracker = None
+
     # Initialize discovery engine for web app
     try:
-        discovery_engine = AlbumDiscoveryEngine(config)
+        discovery_engine = AlbumDiscoveryEngine(config, stats_tracker)
         app.state.discovery_engine = discovery_engine
         logger.info("Web app: Discovery engine initialized successfully")
     except Exception as e:
