@@ -218,19 +218,18 @@ class RecommendationsManager {
         card.innerHTML = `
             <div class="album-status ${statusClass}">${statusText}</div>
             <input type="checkbox" class="album-select" ${this.selectedAlbums.has(album.id) ? 'checked' : ''} 
-                   onchange="recommendationsManager.toggleSelection('${album.id}')">
+                onchange="recommendationsManager.toggleSelection('${album.id}')">
 
             <div class="album-card-header">
                 <div class="album-cover-container">
                     <img class="album-cover loading" 
-                         src="${album.cover_art_url || '/static/images/album-placeholder.png'}" 
-                         alt="${album.title} by ${album.artist}"
-                         onload="this.classList.remove('loading')"
-                         onerror="this.classList.add('error'); this.innerHTML='<i class=\"fas fa-music\"></i>'">
+                        alt="${this.escapeHtml(album.title)} by ${this.escapeHtml(album.artist)}"
+                        onload="this.classList.remove('loading')"
+                        onerror="this.classList.add('error'); this.innerHTML='<i class=\\"fas fa-music\\"></i>'">
                 </div>
                 <div class="album-info">
-                    <div class="album-title" title="${album.title}">${album.title}</div>
-                    <div class="album-artist" title="${album.artist}">${album.artist}</div>
+                    <div class="album-title" title="${this.escapeHtml(album.title)}">${this.escapeHtml(album.title)}</div>
+                    <div class="album-artist" title="${this.escapeHtml(album.artist)}">${this.escapeHtml(album.artist)}</div>
                     ${album.year ? `<div class="album-year">${album.year}</div>` : ''}
                 </div>
             </div>
@@ -248,6 +247,12 @@ class RecommendationsManager {
                 </button>
             </div>
         `;
+
+        // SAFELY set the image src after creating the element
+        const img = card.querySelector('.album-cover');
+        if (img) {
+            img.src = album.cover_art_url || '/static/images/album-placeholder.png';
+        }
 
         return card;
     }
@@ -482,7 +487,7 @@ class RecommendationsManager {
                 body.innerHTML = `
                     <div class="preview-content">
                         <img class="preview-cover" src="${album.cover_art_url || '/static/images/album-placeholder.png'}" 
-                             alt="${album.title}" onerror="this.src='/static/images/album-placeholder.png'">
+                            alt="${album.title}" onerror="this.src='/static/images/album-placeholder.png'">
                         <div class="preview-info">
                             <h3>${album.title}</h3>
                             <div class="artist">${album.artist}</div>
@@ -556,6 +561,12 @@ class RecommendationsManager {
                 </div>
             `;
         }
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     updateUI() {
