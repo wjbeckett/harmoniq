@@ -224,8 +224,7 @@ class RecommendationsManager {
                 <div class="album-cover-container">
                     <img class="album-cover loading" 
                         alt="${this.escapeHtml(album.title)} by ${this.escapeHtml(album.artist)}"
-                        onload="this.classList.remove('loading')"
-                        onerror="this.classList.add('error'); this.innerHTML='<i class=\\"fas fa-music\\"></i>'">
+                        onload="this.classList.remove('loading')">
                 </div>
                 <div class="album-info">
                     <div class="album-title" title="${this.escapeHtml(album.title)}">${this.escapeHtml(album.title)}</div>
@@ -248,10 +247,16 @@ class RecommendationsManager {
             </div>
         `;
 
-        // SAFELY set the image src after creating the element
+        // SAFELY set the image src and error handler after creating the element
         const img = card.querySelector('.album-cover');
         if (img) {
             img.src = album.cover_art_url || '/static/images/album-placeholder.png';
+            
+            // Add error handler safely via JavaScript
+            img.onerror = function() {
+                this.classList.add('error');
+                this.innerHTML = '<i class="fas fa-music"></i>';
+            };
         }
 
         return card;
