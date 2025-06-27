@@ -1,6 +1,6 @@
 """
-Album Recommendations API Endpoints
-Provides REST API for the Album Recommendations page
+Album Recommendations API Endpoints - SQLite Version
+Enhanced REST API with all original functionality plus new SQLite features
 """
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -8,14 +8,18 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import logging
 
-from ...recommendation_storage import AlbumRecommendationManager, RecommendationStatus
+from ...recommendation_manager import (
+    AlbumRecommendationManager,
+    StatsTracker,
+    RecommendationStatus,
+)
 from ...discovery_library_grower import AlbumDiscoveryEngine
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 
-# Pydantic models for request/response
+# Pydantic models for request/response (same as original)
 class RecommendationResponse(BaseModel):
     id: str
     title: str
@@ -58,6 +62,11 @@ def get_discovery_engine(request: Request) -> AlbumDiscoveryEngine:
     if not engine:
         raise HTTPException(status_code=500, detail="Discovery engine not initialized")
     return engine
+
+
+def get_stats_tracker(request: Request) -> Optional[StatsTracker]:
+    """Get stats tracker from app state."""
+    return getattr(request.app.state, "stats_tracker", None)
 
 
 @router.get("/pending", response_model=List[RecommendationResponse])
@@ -245,22 +254,7 @@ async def get_recommendation_statistics(request: Request) -> Dict[str, Any]:
     """Get recommendation statistics and analytics."""
     try:
         recommendation_manager = get_recommendation_manager(request)
-
         stats = recommendation_manager.get_statistics()
-
-        # Add some calculated metrics
-        total_decisions = stats.get("total_approved", 0) + stats.get("total_denied", 0)
-        approval_rate = (
-            (stats.get("total_approved", 0) / total_decisions * 100)
-            if total_decisions > 0
-            else 0
-        )
-
-        stats["total_decisions"] = total_decisions
-        stats["approval_rate"] = round(approval_rate, 1)
-        stats["pending_count"] = stats.get("pending", 0)
-        stats["ready_to_process"] = stats.get("approved", 0)
-
         return stats
 
     except Exception as e:
@@ -296,14 +290,21 @@ async def get_album_preview(album_id: str, request: Request) -> Dict[str, Any]:
     try:
         recommendation_manager = get_recommendation_manager(request)
 
-        # Get the recommendation
-        recommendations = recommendation_manager.recommendations["recommendations"]
-        if album_id not in recommendations:
+        # Get the recommendation using the new SQLite system
+        recommendations = recommendation_manager.get_recommendations_by_status(
+            limit=1000
+        )
+        recommendation = None
+
+        for rec in recommendations:
+            if rec["id"] == album_id:
+                recommendation = rec
+                break
+
+        if not recommendation:
             raise HTTPException(status_code=404, detail="Recommendation not found")
 
-        recommendation = recommendations[album_id]
-
-        # TODO: Add more preview data (YouTube links, Spotify previews, etc.)
+        # Create preview data with external links
         preview_data = {
             "album": recommendation,
             "youtube_search_url": f"https://www.youtube.com/results?search_query={recommendation['artist']}+{recommendation['title']}+full+album",
@@ -337,17 +338,116 @@ async def debug_manager(request: Request):
 
     return {
         "manager_exists": manager is not None,
-        "file_path": manager.recommendations_file,
-        "file_exists": os.path.exists(manager.recommendations_file),
-        "file_readable": os.access(manager.recommendations_file, os.R_OK),
-        "file_size": (
-            os.path.getsize(manager.recommendations_file)
-            if os.path.exists(manager.recommendations_file)
-            else 0
+        "database_path": manager.db_path,
+        "database_exists": os.path.exists(manager.db_path),
+        "database_readable": os.access(manager.db_path, os.R_OK),
+        "database_size": (
+            os.path.getsize(manager.db_path) if os.path.exists(manager.db_path) else 0
         ),
         "manager_stats": manager.get_statistics(),
         "pending_count": len(manager.get_pending_recommendations()),
+        "database_type": "SQLite",
+        "tables_info": _get_database_info(manager),
     }
+
+
+def _get_database_info(manager) -> Dict[str, Any]:
+    """Get database table information for debugging."""
+    try:
+        with manager.db._get_connection() as conn:
+            # Get table names
+            tables = conn.execute(
+                """
+                SELECT name FROM sqlite_master WHERE type='table'
+            """
+            ).fetchall()
+
+            table_info = {}
+            for table in tables:
+                table_name = table["name"]
+                count = conn.execute(
+                    f"SELECT COUNT(*) as count FROM {table_name}"
+                ).fetchone()
+                table_info[table_name] = count["count"]
+
+            return table_info
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# New SQLite-specific endpoints
+@router.get("/analytics/discovery-history")
+async def get_discovery_history(
+    request: Request, limit: int = Query(20, ge=1, le=100)
+) -> List[Dict[str, Any]]:
+    """Get discovery run history with analytics."""
+    try:
+        stats_tracker = get_stats_tracker(request)
+        if not stats_tracker:
+            raise HTTPException(status_code=500, detail="Stats tracker not available")
+
+        history = stats_tracker.get_discovery_run_history(limit)
+        return history
+
+    except Exception as e:
+        logger.error(f"Error fetching discovery history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch discovery history")
+
+
+@router.get("/analytics/user-actions")
+async def get_user_action_history(
+    request: Request, limit: int = Query(50, ge=1, le=200)
+) -> List[Dict[str, Any]]:
+    """Get user action history for analytics."""
+    try:
+        stats_tracker = get_stats_tracker(request)
+        if not stats_tracker:
+            raise HTTPException(status_code=500, detail="Stats tracker not available")
+
+        actions = stats_tracker.get_user_action_history(limit)
+        return actions
+
+    except Exception as e:
+        logger.error(f"Error fetching user actions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch user actions")
+
+
+@router.get("/analytics/recent-activities")
+async def get_recent_activities(
+    request: Request, limit: int = Query(50, ge=1, le=100)
+) -> List[Dict[str, Any]]:
+    """Get recent system activities."""
+    try:
+        stats_tracker = get_stats_tracker(request)
+        if not stats_tracker:
+            raise HTTPException(status_code=500, detail="Stats tracker not available")
+
+        activities = stats_tracker.get_recent_activities(limit)
+        return activities
+
+    except Exception as e:
+        logger.error(f"Error fetching recent activities: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch recent activities")
+
+
+@router.get("/recently-added")
+async def get_recently_added_albums(
+    request: Request, limit: int = Query(10, ge=1, le=50)
+) -> List[Dict[str, Any]]:
+    """Get recently added albums for ribbon display."""
+    try:
+        stats_tracker = get_stats_tracker(request)
+        if not stats_tracker:
+            raise HTTPException(status_code=500, detail="Stats tracker not available")
+
+        albums = stats_tracker.get_recently_added_albums(limit)
+        return albums
+
+    except Exception as e:
+        logger.error(f"Error fetching recently added albums: {e}")
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch recently added albums"
+        )
 
 
 def _calculate_relative_time(iso_date_string: str) -> str:
@@ -355,7 +455,7 @@ def _calculate_relative_time(iso_date_string: str) -> str:
     try:
         from datetime import datetime
 
-        date = datetime.fromisoformat(iso_date_string)
+        date = datetime.fromisoformat(iso_date_string.replace("Z", "+00:00"))
         now = datetime.now()
         diff = now - date
 
