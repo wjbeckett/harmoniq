@@ -430,6 +430,14 @@ class AlbumDiscoveryEngine:
         """Filter out albums that shouldn't be recommended using fast cache lookups."""
         filtered = []
 
+        logger.info(
+            f"🔍 Starting filter with sync_manager: {self.sync_manager is not None}"
+        )
+        if self.sync_manager:
+            logger.info(
+                f"🔍 Cache status - Plex: {len(self.sync_manager.plex_cache)} albums, Lidarr: {len(self.sync_manager.lidarr_cache)} albums"
+            )
+
         # Get existing recommendations from SQLite to avoid duplicates
         existing_recommendations = (
             self.recommendation_manager.get_recommendations_by_status()
@@ -449,13 +457,13 @@ class AlbumDiscoveryEngine:
             # 🚀 NEW: Fast library check using sync manager cache
             if hasattr(self, "sync_manager") and self.sync_manager:
                 # Lightning-fast memory lookup (milliseconds instead of seconds)
-                if self.sync_manager.album_exists_in_libraries(
-                    album["artist"], album["title"], album.get("mbid")
-                ):
-                    logger.debug(
-                        f"Album already in library (cached): {album['artist']} - {album['title']}"
-                    )
-                    continue
+                if album.get("mbid"):
+                    library_check = self.sync_manager.is_album_in_library(album["mbid"])
+                    if library_check["in_any_library"]:
+                        logger.debug(
+                            f"Album already in library (cached): {album['artist']} - {album['title']}"
+                        )
+                        continue
             else:
                 # 🐌 FALLBACK: Slow API calls (only if sync manager not available)
                 logger.warning("Sync manager not available, using slow API fallback")

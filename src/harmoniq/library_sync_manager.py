@@ -137,6 +137,16 @@ class LibrarySyncManager:
             logger.error(f"Pre-discovery check error: {e}")
             return {"success": False, "error": str(e)}
 
+    @property
+    def plex_cache(self):
+        """Get Plex cache for external access."""
+        return self._plex_mbids
+
+    @property
+    def lidarr_cache(self):
+        """Get Lidarr cache for external access."""
+        return self._lidarr_mbids
+
     def is_album_in_library(self, mbid: str) -> Dict[str, bool]:
         """
         Fast check if album exists in either library using cache.
@@ -349,7 +359,8 @@ class LibrarySyncManager:
             self._lidarr_mbids = set()
 
             for album in lidarr_albums:
-                mbid = album.get("foreignAlbumId", "")
+                # Use the correct field name from your database schema
+                mbid = album.get("album_mbid", "")  # Changed from foreignAlbumId
                 if mbid:
                     self._lidarr_mbids.add(mbid)
 
