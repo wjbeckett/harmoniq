@@ -348,6 +348,13 @@ class LibrarySyncManager:
             plex_albums = self.database.get_plex_albums()
             self._plex_mbids = set()
 
+            # DEBUG: Log first few Plex albums
+            logger.info(f"🔍 Found {len(plex_albums)} Plex albums in database")
+            for i, album in enumerate(plex_albums[:3]):  # Show first 3
+                logger.info(
+                    f"🔍 Plex album {i+1}: guid='{album.get('guid', '')}', artist='{album.get('artist_name', '')}', title='{album.get('album_title', '')}'"
+                )
+
             for album in plex_albums:
                 # Extract MBID from Plex GUID if available
                 mbid = self._extract_mbid_from_plex_guid(album.get("guid", ""))
@@ -357,6 +364,13 @@ class LibrarySyncManager:
             # Get Lidarr album MBIDs from database
             lidarr_albums = self.database.get_lidarr_albums()
             self._lidarr_mbids = set()
+
+            # DEBUG: Log first few Lidarr albums
+            logger.info(f"🔍 Found {len(lidarr_albums)} Lidarr albums in database")
+            for i, album in enumerate(lidarr_albums[:3]):  # Show first 3
+                logger.info(
+                    f"🔍 Lidarr album {i+1}: album_mbid='{album.get('album_mbid', '')}', artist='{album.get('artist_name', '')}', title='{album.get('album_title', '')}'"
+                )
 
             for album in lidarr_albums:
                 # Use the correct field name from your database schema

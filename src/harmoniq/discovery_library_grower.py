@@ -152,6 +152,17 @@ class AlbumDiscoveryEngine:
         # Store sync manager reference
         self.sync_manager = sync_manager
 
+        logger.info(
+            f"🔧 Discovery engine initialized with sync_manager: {sync_manager is not None}"
+        )
+        if sync_manager:
+            logger.info(f"🔧 Sync manager type: {type(sync_manager)}")
+            logger.info(
+                f"🔧 Sync manager cache built: {getattr(sync_manager, '_cache_built', 'unknown')}"
+            )
+        else:
+            logger.info("🔧 No sync manager provided to discovery engine!")
+
         # Initialize SQLite-based systems
         config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
         self.recommendation_manager = AlbumRecommendationManager(config_dir)

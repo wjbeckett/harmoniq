@@ -114,18 +114,6 @@ def create_app() -> FastAPI:
         logger.error(f"Web app: Failed to initialize stats tracker: {e}")
         app.state.stats_tracker = None
 
-    # Initialize discovery engine for web app
-    try:
-        # Pass the sync manager to the discovery engine
-        discovery_engine = AlbumDiscoveryEngine(
-            config, stats_tracker, sync_manager=sync_manager
-        )
-        app.state.discovery_engine = discovery_engine
-        logger.info("Web app: Discovery engine initialized successfully")
-    except Exception as e:
-        logger.error(f"Web app: Failed to initialize discovery engine: {e}")
-        app.state.discovery_engine = None
-
     # Get the web directory path
     web_dir = Path(__file__).parent
     static_dir = web_dir / "static"
@@ -217,6 +205,8 @@ def create_app() -> FastAPI:
             try:
                 logger.info("Starting initial library sync...")
                 sync_result = app.state.sync_manager.startup_sync()
+                logger.info(f"🔍 Sync result type: {type(sync_result)}")
+                logger.info(f"🔍 Sync result content: {sync_result}")
 
                 if sync_result["success"]:
                     logger.info(
@@ -226,6 +216,20 @@ def create_app() -> FastAPI:
                     # Start background sync (every 6 hours)
                     app.state.sync_manager.start_background_sync(interval_hours=6)
                     logger.info("🔄 Background sync scheduled (every 6 hours)")
+
+                    # NOW initialize discovery engine with synced cache
+                    try:
+                        discovery_engine = AlbumDiscoveryEngine(
+                            config,
+                            app.state.stats_tracker,
+                            sync_manager=app.state.sync_manager,
+                        )
+                        app.state.discovery_engine = discovery_engine
+                        logger.info("✅ Discovery engine initialized with synced cache")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize discovery engine: {e}")
+                        app.state.discovery_engine = None
+
                 else:
                     logger.error(
                         f"❌ Startup sync failed: {sync_result.get('error', 'Unknown error')}"
