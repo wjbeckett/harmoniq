@@ -469,14 +469,24 @@ class AlbumDiscoveryEngine:
 
             # 🚀 NEW: Fast library check using sync manager cache
             if hasattr(self, "sync_manager") and self.sync_manager:
-                # Lightning-fast memory lookup (milliseconds instead of seconds)
+                # Try MBID first (fastest)
                 if album.get("mbid"):
                     library_check = self.sync_manager.is_album_in_library(album["mbid"])
                     if library_check["in_any_library"]:
                         logger.debug(
-                            f"Album already in library (cached): {album['artist']} - {album['title']}"
+                            f"Album already in library (MBID): {album['artist']} - {album['title']}"
                         )
                         continue
+
+                # Fallback to artist + title matching
+                library_check = self.sync_manager.album_exists_by_name(
+                    album["artist"], album["title"]
+                )
+                if library_check["in_any_library"]:
+                    logger.debug(
+                        f"Album already in library (name): {album['artist']} - {album['title']}"
+                    )
+                    continue
             else:
                 # 🐌 FALLBACK: Slow API calls (only if sync manager not available)
                 logger.warning("Sync manager not available, using slow API fallback")

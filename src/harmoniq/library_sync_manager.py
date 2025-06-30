@@ -167,6 +167,43 @@ class LibrarySyncManager:
             "in_any_library": mbid in self._plex_mbids or mbid in self._lidarr_mbids,
         }
 
+    def album_exists_by_name(self, artist: str, title: str) -> Dict[str, bool]:
+        """Check if album exists by artist + title matching (fallback when no MBID)."""
+        try:
+            # Normalize for comparison
+            search_artist = artist.lower().strip()
+            search_title = title.lower().strip()
+
+            # Check Plex albums
+            plex_albums = self.database.get_plex_albums()
+            in_plex = False
+            for album in plex_albums:
+                plex_artist = album.get("artist_name", "").lower().strip()
+                plex_title = album.get("album_title", "").lower().strip()
+                if plex_artist == search_artist and plex_title == search_title:
+                    in_plex = True
+                    break
+
+            # Check Lidarr albums
+            lidarr_albums = self.database.get_lidarr_albums()
+            in_lidarr = False
+            for album in lidarr_albums:
+                lidarr_artist = album.get("artist_name", "").lower().strip()
+                lidarr_title = album.get("album_title", "").lower().strip()
+                if lidarr_artist == search_artist and lidarr_title == search_title:
+                    in_lidarr = True
+                    break
+
+            return {
+                "in_plex": in_plex,
+                "in_lidarr": in_lidarr,
+                "in_any_library": in_plex or in_lidarr,
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking album by name: {e}")
+            return {"in_plex": False, "in_lidarr": False, "in_any_library": False}
+
     def start_background_sync(self, interval_hours: int = 6):
         """
         Start background sync task that runs every N hours.

@@ -103,8 +103,6 @@ def initialize_global_clients_and_libs():
             logger.info(
                 f"Scheduler: Sync completed - {sync_result.get('total_unique_albums', 0)} albums cached"
             )
-            # Start background sync
-            sync_manager.start_background_sync(interval_hours=6)
         else:
             logger.error(
                 f"Scheduler: Sync failed - {sync_result.get('error', 'Unknown error')}"
