@@ -467,26 +467,25 @@ class AlbumDiscoveryEngine:
             if album_key in existing_rec_titles:
                 continue
 
-            # 🚀 NEW: Fast library check using sync manager cache
             if hasattr(self, "sync_manager") and self.sync_manager:
-                # Try MBID first (fastest)
-                if album.get("mbid"):
-                    library_check = self.sync_manager.is_album_in_library(album["mbid"])
-                    if library_check["in_any_library"]:
-                        logger.debug(
-                            f"Album already in library (MBID): {album['artist']} - {album['title']}"
-                        )
-                        continue
-
-                # Fallback to artist + title matching
-                library_check = self.sync_manager.album_exists_by_name(
+                # First check: Plex (actual library)
+                plex_check = self.sync_manager.album_exists_by_name(
                     album["artist"], album["title"]
                 )
-                if library_check["in_any_library"]:
+                if plex_check["in_plex"]:
                     logger.debug(
-                        f"Album already in library (name): {album['artist']} - {album['title']}"
+                        f"Album already in Plex: {album['artist']} - {album['title']}"
                     )
                     continue
+
+                # Second check: Lidarr monitored (queued for download)
+                if album.get("mbid"):
+                    lidarr_check = self.sync_manager.is_album_in_library(album["mbid"])
+                    if lidarr_check["in_lidarr"]:
+                        logger.debug(
+                            f"Album already monitored in Lidarr: {album['artist']} - {album['title']}"
+                        )
+                        continue
             else:
                 # 🐌 FALLBACK: Slow API calls (only if sync manager not available)
                 logger.warning("Sync manager not available, using slow API fallback")

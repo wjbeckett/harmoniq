@@ -244,23 +244,20 @@ class LidarrClient:
             )
             return None
 
-    def get_all_albums(self) -> List[Dict]:
-        """
-        Get all albums from Lidarr library.
-
-        Returns:
-            List of album dictionaries
-        """
+    def get_all_albums(self):
+        """Fetch all monitored albums from Lidarr."""
         try:
-            result = self._make_request("GET", "album")
-            if result and isinstance(result, list):
-                logger.debug(f"Retrieved {len(result)} albums from Lidarr")
-                return result
-            else:
-                logger.warning("No albums found in Lidarr or request failed")
-                return []
+            logger.info("Fetching all monitored albums from Lidarr library...")
+            # Add monitored=true filter
+            response = self._make_request("GET", "/album", params={"monitored": "true"})
+
+            if response:
+                albums = response
+                logger.debug(f"Retrieved {len(albums)} monitored albums from Lidarr")
+                return albums
+            return []
         except Exception as e:
-            logger.error(f"Error getting albums from Lidarr: {e}")
+            logger.error(f"Error fetching monitored albums from Lidarr: {e}")
             return []
 
     def get_existing_album_mbids(self) -> set:
