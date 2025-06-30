@@ -444,7 +444,9 @@ class AlbumDiscoveryEngine:
         logger.info(
             f"🔍 Starting filter with sync_manager: {self.sync_manager is not None}"
         )
-        if self.sync_manager:
+        logger.info(f"🔍 self.sync_manager value: {self.sync_manager}")
+        logger.info(f"🔍 hasattr sync_manager: {hasattr(self, 'sync_manager')}")
+        if hasattr(self, "sync_manager") and self.sync_manager:
             logger.info(
                 f"🔍 Cache status - Plex: {len(self.sync_manager.plex_cache)} albums, Lidarr: {len(self.sync_manager.lidarr_cache)} albums"
             )
