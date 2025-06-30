@@ -21,6 +21,9 @@ from .lastfm_client import LastfmClient
 from . import config
 from .log_config import logger
 from .stats_tracker import get_stats_tracker
+from .library_sync_manager import LibrarySyncManager
+from .database import HarmoniqDatabase
+
 
 shutdown_event_triggered = False
 
@@ -53,7 +56,9 @@ def initialize_global_clients_and_libs():
     valid_music_libraries_global = (
         []
     )  # Reset for re-initialization if ever called again
+
     try:
+        # Initialize Plex client
         plex_client_global = PlexClient()
 
         if plex_client_global:
@@ -72,9 +77,45 @@ def initialize_global_clients_and_libs():
                 )
         else:
             logger.error("Scheduler: Plex client failed to initialize.")
+
+        # Initialize other clients and database
         stats_tracker = get_stats_tracker()
-        discovery_engine_global = AlbumDiscoveryEngine(config, stats_tracker)
+
+        # Create client instances (not classes!)
+        lidarr_client = LidarrClient(
+            base_url=config.LIDARR_URL, api_key=config.LIDARR_API_KEY
+        )
+
+        # Initialize database
+        import os
+
+        config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
+        database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
+
+        # Create sync manager with actual instances
+        sync_manager = LibrarySyncManager(plex_client_global, lidarr_client, database)
+
+        # Perform initial sync
+        logger.info("Scheduler: Performing initial library sync...")
+        sync_result = sync_manager.startup_sync()
+
+        if sync_result["success"]:
+            logger.info(
+                f"Scheduler: Sync completed - {sync_result.get('total_unique_albums', 0)} albums cached"
+            )
+            # Start background sync
+            sync_manager.start_background_sync(interval_hours=6)
+        else:
+            logger.error(
+                f"Scheduler: Sync failed - {sync_result.get('error', 'Unknown error')}"
+            )
+
+        # Create discovery engine with sync manager
+        discovery_engine_global = AlbumDiscoveryEngine(
+            config, stats_tracker, sync_manager=sync_manager
+        )
         logger.info("Scheduler: Discovery engine initialized successfully.")
+
     except Exception as e:
         logger.exception(
             f"Scheduler: Critical error during global client initialization: {e}"
