@@ -16,6 +16,7 @@ from plexapi.audio import Track as PlexApiTrack
 # Import config variables
 from . import config
 from collections import Counter
+from .database import LibrarySyncStatus
 
 logger = logging.getLogger(__name__)
 
@@ -1949,7 +1950,7 @@ class PlexClient:
             if sync_errors:
                 sync_status = database.LibrarySyncStatus.PARTIAL
             else:
-                sync_status = database.LibrarySyncStatus.SUCCESS
+                sync_status = LibrarySyncStatus.SUCCESS
 
             # Complete sync tracking
             database.complete_library_sync(
