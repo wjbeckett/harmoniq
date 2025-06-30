@@ -5,8 +5,9 @@ Handles communication with Lidarr for album management.
 
 import logging
 import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import urljoin
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -282,3 +283,393 @@ class LidarrClient:
         except Exception as e:
             logger.error(f"Error getting existing album MBIDs: {e}")
             return set()
+
+    def get_library_stats(self) -> Dict[str, Any]:
+        """
+        Get comprehensive Lidarr library statistics.
+
+        Returns:
+            Dictionary with library statistics and status info
+        """
+        try:
+            # Get system status
+            status = self._make_request("GET", "system/status")
+
+            # Get all albums
+            albums = self.get_all_albums()
+
+            # Calculate statistics
+            total_albums = len(albums)
+            monitored_count = sum(
+                1 for album in albums if album.get("monitored", False)
+            )
+            downloaded_count = sum(
+                1 for album in albums if album.get("status") == "downloaded"
+            )
+            wanted_count = sum(
+                1 for album in albums if album.get("status") in ["wanted", "missing"]
+            )
+
+            # Get quality profiles and root folders
+            quality_profiles = self.get_quality_profiles()
+            root_folders = self.get_root_folders()
+
+            return {
+                "success": True,
+                "server_version": (
+                    status.get("version", "unknown") if status else "unknown"
+                ),
+                "total_albums": total_albums,
+                "monitored_albums": monitored_count,
+                "downloaded_albums": downloaded_count,
+                "wanted_albums": wanted_count,
+                "quality_profiles": len(quality_profiles),
+                "root_folders": len(root_folders),
+                "albums_by_status": self._get_albums_by_status(albums),
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting Lidarr library stats: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _get_albums_by_status(self, albums: List[Dict]) -> Dict[str, int]:
+        """Helper method to count albums by status."""
+        status_counts = {}
+        for album in albums:
+            status = album.get("status", "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+        return status_counts
+
+    def fetch_all_library_albums(
+        self, include_unmonitored: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch all albums from Lidarr library with detailed information.
+
+        Args:
+            include_unmonitored: Whether to include unmonitored albums
+
+        Returns:
+            List of album dictionaries with standardized structure for database sync
+        """
+        try:
+            logger.info("Fetching all albums from Lidarr library...")
+
+            # Get all albums from Lidarr
+            albums_raw = self.get_all_albums()
+
+            if not albums_raw:
+                logger.warning("No albums found in Lidarr library")
+                return []
+
+            logger.info(f"Processing {len(albums_raw)} albums from Lidarr")
+
+            albums_processed = []
+            for album in albums_raw:
+                try:
+                    # Skip unmonitored albums if requested
+                    if not include_unmonitored and not album.get("monitored", True):
+                        continue
+
+                    # Extract album data in standardized format matching database schema
+                    album_data = {
+                        "id": album.get("id"),  # Lidarr internal ID
+                        "title": album.get("title", ""),
+                        "artist": album.get("artist", {}),  # Full artist object
+                        "foreignAlbumId": album.get(
+                            "foreignAlbumId", ""
+                        ),  # MusicBrainz ID
+                        "status": album.get("status", ""),
+                        "monitored": album.get("monitored", True),
+                        "qualityProfileId": album.get("qualityProfileId"),
+                        "releaseDate": album.get("releaseDate", ""),
+                        "path": album.get("path", ""),
+                        "sizeOnDisk": album.get("sizeOnDisk", 0),
+                        "dateAdded": album.get("dateAdded", ""),
+                        "grabbed": album.get("grabbed", False),
+                        "statistics": album.get("statistics", {}),
+                        "releases": album.get("releases", []),
+                        # Store full raw data for future use
+                        "raw_data": album,
+                    }
+
+                    albums_processed.append(album_data)
+
+                except Exception as e:
+                    logger.warning(
+                        f"Error processing Lidarr album '{album.get('title', 'unknown')}': {e}"
+                    )
+                    continue
+
+            logger.info(
+                f"Successfully processed {len(albums_processed)} albums from Lidarr"
+            )
+            return albums_processed
+
+        except Exception as e:
+            logger.error(f"Error fetching albums from Lidarr: {e}")
+            return []
+
+    def sync_library_to_database(
+        self, database, include_unmonitored: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Sync Lidarr library to the database cache.
+
+        Args:
+            database: HarmoniqDatabase instance
+            include_unmonitored: Whether to include unmonitored albums
+
+        Returns:
+            Dictionary with sync results and statistics
+        """
+        # Start library sync tracking
+        sync_id = database.start_library_sync("lidarr")
+        sync_start_time = datetime.now()
+
+        try:
+            logger.info("Starting Lidarr library sync to database...")
+
+            # Test connection first
+            if not self.test_connection():
+                error_msg = "Cannot sync: Lidarr connection failed"
+                logger.error(error_msg)
+                database.complete_library_sync(
+                    sync_id,
+                    database.LibrarySyncStatus.FAILED,
+                    {
+                        "started_at": sync_start_time.isoformat(),
+                        "albums_synced": 0,
+                        "errors": [error_msg],
+                    },
+                )
+                return {"success": False, "error": error_msg}
+
+            # Fetch all albums from Lidarr
+            all_albums = self.fetch_all_library_albums(
+                include_unmonitored=include_unmonitored
+            )
+
+            if not all_albums:
+                logger.warning("No albums found in Lidarr library")
+                database.complete_library_sync(
+                    sync_id,
+                    database.LibrarySyncStatus.SUCCESS,
+                    {
+                        "started_at": sync_start_time.isoformat(),
+                        "albums_synced": 0,
+                        "albums_added": 0,
+                        "albums_updated": 0,
+                        "errors": [],
+                    },
+                )
+                return {
+                    "success": True,
+                    "albums_synced": 0,
+                    "message": "No albums found",
+                }
+
+            logger.info(f"Syncing {len(all_albums)} albums to database...")
+
+            # Sync to database using existing method
+            sync_stats = database.sync_lidarr_albums(all_albums)
+
+            # Complete sync tracking
+            database.complete_library_sync(
+                sync_id,
+                database.LibrarySyncStatus.SUCCESS,
+                {
+                    "started_at": sync_start_time.isoformat(),
+                    "albums_synced": sync_stats["total"],
+                    "albums_added": sync_stats["added"],
+                    "albums_updated": sync_stats["updated"],
+                    "errors": [],
+                    "details": {
+                        "include_unmonitored": include_unmonitored,
+                        "lidarr_version": self._get_lidarr_version(),
+                    },
+                },
+            )
+
+            logger.info(f"Lidarr library sync completed: {sync_stats}")
+
+            return {
+                "success": True,
+                "sync_id": sync_id,
+                "albums_total": sync_stats["total"],
+                "albums_added": sync_stats["added"],
+                "albums_updated": sync_stats["updated"],
+                "sync_status": "success",
+            }
+
+        except Exception as e:
+            error_msg = f"Unexpected error during Lidarr library sync: {e}"
+            logger.error(error_msg)
+
+            # Complete sync with failure status
+            database.complete_library_sync(
+                sync_id,
+                database.LibrarySyncStatus.FAILED,
+                {
+                    "started_at": sync_start_time.isoformat(),
+                    "albums_synced": 0,
+                    "errors": [error_msg],
+                },
+            )
+
+            return {"success": False, "error": error_msg}
+
+    def _get_lidarr_version(self) -> str:
+        """Get Lidarr version for sync tracking."""
+        try:
+            status = self._make_request("GET", "system/status")
+            return status.get("version", "unknown") if status else "unknown"
+        except:
+            return "unknown"
+
+    def quick_library_check(self) -> Dict[str, Any]:
+        """
+        Quick check of Lidarr library without full sync - useful for testing connectivity.
+
+        Returns:
+            Dictionary with library information and album counts
+        """
+        try:
+            # Test connection
+            if not self.test_connection():
+                return {"success": False, "error": "Lidarr connection failed"}
+
+            # Get basic stats
+            stats = self.get_library_stats()
+
+            if not stats["success"]:
+                return stats
+
+            # Get configuration info
+            quality_profiles = self.get_quality_profiles()
+            root_folders = self.get_root_folders()
+            metadata_profiles = self.get_metadata_profiles()
+
+            return {
+                "success": True,
+                "server_version": stats["server_version"],
+                "total_albums": stats["total_albums"],
+                "monitored_albums": stats["monitored_albums"],
+                "downloaded_albums": stats["downloaded_albums"],
+                "wanted_albums": stats["wanted_albums"],
+                "albums_by_status": stats["albums_by_status"],
+                "configuration": {
+                    "quality_profiles": len(quality_profiles),
+                    "root_folders": len(root_folders),
+                    "metadata_profiles": len(metadata_profiles),
+                },
+                "quality_profiles": [
+                    {"id": qp["id"], "name": qp["name"]} for qp in quality_profiles
+                ],
+                "root_folders": [
+                    {"id": rf["id"], "path": rf["path"]} for rf in root_folders
+                ],
+            }
+
+        except Exception as e:
+            logger.error(f"Error during Lidarr library check: {e}")
+            return {"success": False, "error": str(e)}
+
+    def test_library_sync(self, database, limit: int = 5) -> Dict[str, Any]:
+        """
+        Test library sync with a small number of albums - useful for development and testing.
+
+        Args:
+            database: HarmoniqDatabase instance
+            limit: Number of albums to process for testing
+
+        Returns:
+            Dictionary with test results
+        """
+        try:
+            logger.info(f"Testing Lidarr sync with {limit} albums...")
+
+            # Test connection first
+            if not self.test_connection():
+                return {"success": False, "error": "Lidarr connection failed"}
+
+            # Get limited albums
+            all_albums = self.fetch_all_library_albums()
+
+            if not all_albums:
+                return {"success": False, "error": "No albums found in Lidarr"}
+
+            # Limit for testing
+            test_albums = all_albums[:limit]
+
+            logger.info(f"Testing sync with {len(test_albums)} albums")
+
+            # Test database sync
+            sync_stats = database.sync_lidarr_albums(test_albums)
+
+            return {
+                "success": True,
+                "albums_processed": len(test_albums),
+                "albums_added": sync_stats["added"],
+                "albums_updated": sync_stats["updated"],
+                "sample_albums": [
+                    {
+                        "title": album["title"],
+                        "artist": (
+                            album["artist"].get("artistName", "Unknown")
+                            if album["artist"]
+                            else "Unknown"
+                        ),
+                        "status": album["status"],
+                        "monitored": album["monitored"],
+                    }
+                    for album in test_albums[:3]  # First 3 as sample
+                ],
+            }
+
+        except Exception as e:
+            logger.error(f"Error during test sync: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_albums_by_status(self, status: str) -> List[Dict[str, Any]]:
+        """
+        Get albums filtered by status (downloaded, wanted, missing, etc.).
+
+        Args:
+            status: Album status to filter by
+
+        Returns:
+            List of albums with the specified status
+        """
+        try:
+            all_albums = self.get_all_albums()
+            filtered_albums = [
+                album for album in all_albums if album.get("status") == status
+            ]
+
+            logger.info(f"Found {len(filtered_albums)} albums with status '{status}'")
+            return filtered_albums
+
+        except Exception as e:
+            logger.error(f"Error getting albums by status '{status}': {e}")
+            return []
+
+    def get_monitored_albums(self) -> List[Dict[str, Any]]:
+        """
+        Get only monitored albums from Lidarr.
+
+        Returns:
+            List of monitored albums
+        """
+        try:
+            all_albums = self.get_all_albums()
+            monitored_albums = [
+                album for album in all_albums if album.get("monitored", False)
+            ]
+
+            logger.info(f"Found {len(monitored_albums)} monitored albums")
+            return monitored_albums
+
+        except Exception as e:
+            logger.error(f"Error getting monitored albums: {e}")
+            return []

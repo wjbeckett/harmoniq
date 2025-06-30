@@ -14,7 +14,11 @@ from typing import Optional
 
 from harmoniq import config
 
-from .recommendation_manager import AlbumRecommendationManager, StatsTracker, RecommendationStatus
+from .recommendation_manager import (
+    AlbumRecommendationManager,
+    StatsTracker,
+    RecommendationStatus,
+)
 from .lastfm_client import LastfmClient
 from .musicbrainz_client import MusicBrainzClient
 from .lidarr_client import LidarrClient
@@ -142,8 +146,11 @@ def generate_placeholder_cover_url(artist: str, album: str) -> str:
 class AlbumDiscoveryEngine:
     """Discovers new albums and stores them as recommendations using SQLite."""
 
-    def __init__(self, config, stats_tracker=None):
+    def __init__(self, config, stats_tracker=None, sync_manager=None):
         self.config = config
+
+        # Store sync manager reference
+        self.sync_manager = sync_manager
 
         # Initialize SQLite-based systems
         config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
@@ -179,7 +186,7 @@ class AlbumDiscoveryEngine:
             "artists_processed": 0,
             "similar_artists_found": 0,
             "albums_filtered": 0,
-            "run_id": run_id
+            "run_id": run_id,
         }
 
         try:
@@ -292,7 +299,9 @@ class AlbumDiscoveryEngine:
         finally:
             # Update discovery run in database
             discovery_results["completed_at"] = datetime.now().isoformat()
-            self.recommendation_manager.db.update_discovery_run(run_id, discovery_results)
+            self.recommendation_manager.db.update_discovery_run(
+                run_id, discovery_results
+            )
 
         return discovery_results
 
@@ -418,19 +427,8 @@ class AlbumDiscoveryEngine:
     async def _filter_albums(
         self, albums: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Filter out albums that shouldn't be recommended using SQLite cache."""
+        """Filter out albums that shouldn't be recommended using fast cache lookups."""
         filtered = []
-
-        # Get existing Lidarr albums to avoid duplicates
-        try:
-            existing_albums = self.lidarr_client.get_all_albums()
-            existing_titles = {
-                f"{album['artist']}_{album['title']}".lower()
-                for album in existing_albums
-            }
-        except Exception as e:
-            logger.warning(f"Could not fetch existing Lidarr albums: {e}")
-            existing_titles = set()
 
         # Get existing recommendations from SQLite to avoid duplicates
         existing_recommendations = (
@@ -444,13 +442,33 @@ class AlbumDiscoveryEngine:
         for album in albums:
             album_key = f"{album['artist']}_{album['title']}".lower()
 
-            # Skip if already in Lidarr
-            if album_key in existing_titles:
-                continue
-
             # Skip if already recommended
             if album_key in existing_rec_titles:
                 continue
+
+            # 🚀 NEW: Fast library check using sync manager cache
+            if hasattr(self, "sync_manager") and self.sync_manager:
+                # Lightning-fast memory lookup (milliseconds instead of seconds)
+                if album.get("mbid") and self.sync_manager.is_album_in_library(
+                    album["mbid"]
+                ):
+                    logger.debug(
+                        f"Album already in library (cached): {album['artist']} - {album['title']}"
+                    )
+                    continue
+            else:
+                # 🐌 FALLBACK: Slow API calls (only if sync manager not available)
+                logger.warning("Sync manager not available, using slow API fallback")
+                try:
+                    existing_albums = self.lidarr_client.get_all_albums()
+                    existing_titles = {
+                        f"{album['artist']}_{album['title']}".lower()
+                        for album in existing_albums
+                    }
+                    if album_key in existing_titles:
+                        continue
+                except Exception as e:
+                    logger.warning(f"Could not fetch existing Lidarr albums: {e}")
 
             # Skip if too new (might not be available yet)
             max_year = datetime.now().year + 1

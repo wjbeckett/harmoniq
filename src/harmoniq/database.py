@@ -1,6 +1,6 @@
 """
 SQLite Database System for Harmoniq
-Handles albums, recommendations, discovery runs, user actions, and statistics
+Handles albums, recommendations, discovery runs, user actions, statistics, and library caching
 """
 
 import sqlite3
@@ -24,6 +24,14 @@ class RecommendationStatus(Enum):
     PROCESSING = "processing"
     ADDED = "added"
     FAILED = "failed"
+
+
+class LibrarySyncStatus(Enum):
+    """Status enum for library sync operations."""
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    IN_PROGRESS = "in_progress"
 
 
 class HarmoniqDatabase:
@@ -120,6 +128,66 @@ class HarmoniqDatabase:
                 )
             """)
 
+            # NEW: Lidarr library cache
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS lidarr_albums (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lidarr_id INTEGER UNIQUE NOT NULL,
+                    artist_name TEXT NOT NULL,
+                    album_title TEXT NOT NULL,
+                    artist_mbid TEXT,
+                    album_mbid TEXT,
+                    status TEXT, -- 'wanted', 'downloaded', 'missing', etc.
+                    monitored BOOLEAN DEFAULT 1,
+                    quality_profile_id INTEGER,
+                    release_date TEXT,
+                    path TEXT,
+                    size_on_disk INTEGER DEFAULT 0,
+                    date_added TIMESTAMP,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    raw_data TEXT -- JSON of full Lidarr response
+                )
+            """)
+
+            # NEW: Plex library cache
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS plex_albums (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plex_id TEXT UNIQUE NOT NULL,
+                    artist_name TEXT NOT NULL,
+                    album_title TEXT NOT NULL,
+                    year INTEGER,
+                    rating_key TEXT,
+                    guid TEXT,
+                    thumb TEXT,
+                    art TEXT,
+                    duration INTEGER,
+                    track_count INTEGER,
+                    date_added TIMESTAMP,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    library_section_id INTEGER,
+                    raw_data TEXT -- JSON of full Plex response
+                )
+            """)
+
+            # NEW: Library sync history
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS library_syncs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sync_type TEXT NOT NULL, -- 'lidarr', 'plex', 'both'
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    status TEXT NOT NULL, -- 'success', 'partial', 'failed', 'in_progress'
+                    albums_synced INTEGER DEFAULT 0,
+                    albums_added INTEGER DEFAULT 0,
+                    albums_updated INTEGER DEFAULT 0,
+                    albums_removed INTEGER DEFAULT 0,
+                    errors TEXT, -- JSON array
+                    sync_duration_seconds REAL,
+                    details TEXT -- JSON for additional sync info
+                )
+            """)
+
             # Create indexes for better performance
             conn.execute("CREATE INDEX IF NOT EXISTS idx_recommendations_status ON recommendations (status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_recommendations_discovered ON recommendations (discovered_date)")
@@ -128,6 +196,15 @@ class HarmoniqDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_user_actions_timestamp ON user_actions (timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_statistics_type ON statistics (stat_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_recently_added_timestamp ON recently_added (added_at)")
+
+            # NEW: Library cache indexes for fast filtering
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_lidarr_artist_album ON lidarr_albums (artist_name, album_title)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_lidarr_status ON lidarr_albums (status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_lidarr_updated ON lidarr_albums (last_updated)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_plex_artist_album ON plex_albums (artist_name, album_title)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_plex_updated ON plex_albums (last_updated)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_library_syncs_type ON library_syncs (sync_type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_library_syncs_started ON library_syncs (started_at)")
 
             conn.commit()
 
@@ -385,6 +462,10 @@ class HarmoniqDatabase:
                 SELECT * FROM discovery_runs ORDER BY started_at DESC LIMIT 1
             """).fetchone()
 
+            # Library stats
+            lidarr_count = conn.execute("SELECT COUNT(*) as count FROM lidarr_albums").fetchone()['count']
+            plex_count = conn.execute("SELECT COUNT(*) as count FROM plex_albums").fetchone()['count']
+
             # Calculate derived stats
             total_decisions = status_counts.get('approved', 0) + status_counts.get('denied', 0)
             approval_rate = (status_counts.get('approved', 0) / total_decisions * 100) if total_decisions > 0 else 0
@@ -399,7 +480,9 @@ class HarmoniqDatabase:
                 'ready_to_process': status_counts.get('approved', 0),
                 'recent_discoveries_7d': recent_discoveries,
                 'recent_actions_7d': recent_actions,
-                'last_discovery_run': dict(last_run) if last_run else None
+                'last_discovery_run': dict(last_run) if last_run else None,
+                'lidarr_albums_cached': lidarr_count,
+                'plex_albums_cached': plex_count
             }
 
     def start_discovery_run(self) -> int:
@@ -486,6 +569,294 @@ class HarmoniqDatabase:
             """, (limit,)).fetchall()
 
             return [self._row_to_album_dict(row) for row in rows]
+
+    # NEW: Library Sync Methods
+
+    def start_library_sync(self, sync_type: str) -> int:
+        """Start a new library sync operation."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                INSERT INTO library_syncs (sync_type, status) 
+                VALUES (?, 'in_progress')
+            """, (sync_type,))
+            sync_id = cursor.lastrowid
+            conn.commit()
+
+        return sync_id
+
+    def complete_library_sync(self, sync_id: int, status: LibrarySyncStatus, results: Dict[str, Any]):
+        """Complete a library sync operation with results."""
+        sync_duration = (datetime.now() - datetime.fromisoformat(results.get('started_at', datetime.now().isoformat()))).total_seconds()
+
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE library_syncs 
+                SET completed_at = CURRENT_TIMESTAMP,
+                    status = ?,
+                    albums_synced = ?,
+                    albums_added = ?,
+                    albums_updated = ?,
+                    albums_removed = ?,
+                    errors = ?,
+                    sync_duration_seconds = ?,
+                    details = ?
+                WHERE id = ?
+            """, (
+                status.value,
+                results.get('albums_synced', 0),
+                results.get('albums_added', 0),
+                results.get('albums_updated', 0),
+                results.get('albums_removed', 0),
+                json.dumps(results.get('errors', [])),
+                sync_duration,
+                json.dumps(results.get('details', {})),
+                sync_id
+            ))
+            conn.commit()
+
+    def sync_lidarr_albums(self, albums: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Sync Lidarr albums to database cache."""
+        stats = {'added': 0, 'updated': 0, 'total': len(albums)}
+
+        with self._get_connection() as conn:
+            for album in albums:
+                try:
+                    # Check if album exists
+                    existing = conn.execute("""
+                        SELECT id FROM lidarr_albums WHERE lidarr_id = ?
+                    """, (album['id'],)).fetchone()
+
+                    if existing:
+                        # Update existing album
+                        conn.execute("""
+                            UPDATE lidarr_albums 
+                            SET artist_name = ?, album_title = ?, artist_mbid = ?, album_mbid = ?,
+                                status = ?, monitored = ?, quality_profile_id = ?, release_date = ?,
+                                path = ?, size_on_disk = ?, date_added = ?, last_updated = CURRENT_TIMESTAMP,
+                                raw_data = ?
+                            WHERE lidarr_id = ?
+                        """, (
+                            album.get('artist', {}).get('artistName', ''),
+                            album.get('title', ''),
+                            album.get('artist', {}).get('foreignArtistId'),
+                            album.get('foreignAlbumId'),
+                            album.get('status', ''),
+                            album.get('monitored', True),
+                            album.get('qualityProfileId'),
+                            album.get('releaseDate'),
+                            album.get('path', ''),
+                            album.get('sizeOnDisk', 0),
+                            album.get('dateAdded'),
+                            json.dumps(album),
+                            album['id']
+                        ))
+                        stats['updated'] += 1
+                    else:
+                        # Insert new album
+                        conn.execute("""
+                            INSERT INTO lidarr_albums 
+                            (lidarr_id, artist_name, album_title, artist_mbid, album_mbid,
+                             status, monitored, quality_profile_id, release_date, path,
+                             size_on_disk, date_added, raw_data)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            album['id'],
+                            album.get('artist', {}).get('artistName', ''),
+                            album.get('title', ''),
+                            album.get('artist', {}).get('foreignArtistId'),
+                            album.get('foreignAlbumId'),
+                            album.get('status', ''),
+                            album.get('monitored', True),
+                            album.get('qualityProfileId'),
+                            album.get('releaseDate'),
+                            album.get('path', ''),
+                            album.get('sizeOnDisk', 0),
+                            album.get('dateAdded'),
+                            json.dumps(album)
+                        ))
+                        stats['added'] += 1
+
+                except Exception as e:
+                    logger.error(f"Error syncing Lidarr album {album.get('id', 'unknown')}: {e}")
+
+            conn.commit()
+
+        return stats
+
+    def sync_plex_albums(self, albums: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Sync Plex albums to database cache."""
+        stats = {'added': 0, 'updated': 0, 'total': len(albums)}
+
+        with self._get_connection() as conn:
+            for album in albums:
+                try:
+                    # Check if album exists
+                    existing = conn.execute("""
+                        SELECT id FROM plex_albums WHERE plex_id = ?
+                    """, (album['ratingKey'],)).fetchone()
+
+                    if existing:
+                        # Update existing album
+                        conn.execute("""
+                            UPDATE plex_albums 
+                            SET artist_name = ?, album_title = ?, year = ?, rating_key = ?,
+                                guid = ?, thumb = ?, art = ?, duration = ?, track_count = ?,
+                                date_added = ?, library_section_id = ?, last_updated = CURRENT_TIMESTAMP,
+                                raw_data = ?
+                            WHERE plex_id = ?
+                        """, (
+                            album.get('parentTitle', ''),
+                            album.get('title', ''),
+                            album.get('year'),
+                            album.get('ratingKey'),
+                            album.get('guid'),
+                            album.get('thumb'),
+                            album.get('art'),
+                            album.get('duration'),
+                            album.get('leafCount'),
+                            album.get('addedAt'),
+                            album.get('librarySectionID'),
+                            json.dumps(album),
+                            album['ratingKey']
+                        ))
+                        stats['updated'] += 1
+                    else:
+                        # Insert new album
+                        conn.execute("""
+                            INSERT INTO plex_albums 
+                            (plex_id, artist_name, album_title, year, rating_key, guid,
+                             thumb, art, duration, track_count, date_added, library_section_id, raw_data)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            album['ratingKey'],
+                            album.get('parentTitle', ''),
+                            album.get('title', ''),
+                            album.get('year'),
+                            album.get('ratingKey'),
+                            album.get('guid'),
+                            album.get('thumb'),
+                            album.get('art'),
+                            album.get('duration'),
+                            album.get('leafCount'),
+                            album.get('addedAt'),
+                            album.get('librarySectionID'),
+                            json.dumps(album)
+                        ))
+                        stats['added'] += 1
+
+                except Exception as e:
+                    logger.error(f"Error syncing Plex album {album.get('ratingKey', 'unknown')}: {e}")
+
+            conn.commit()
+
+        return stats
+
+    def is_album_in_lidarr(self, artist: str, title: str) -> bool:
+        """Check if album exists in Lidarr library cache."""
+        with self._get_connection() as conn:
+            result = conn.execute("""
+                SELECT 1 FROM lidarr_albums 
+                WHERE LOWER(artist_name) = LOWER(?) AND LOWER(album_title) = LOWER(?)
+                LIMIT 1
+            """, (artist, title)).fetchone()
+
+            return result is not None
+
+    def is_album_in_plex(self, artist: str, title: str) -> bool:
+        """Check if album exists in Plex library cache."""
+        with self._get_connection() as conn:
+            result = conn.execute("""
+                SELECT 1 FROM plex_albums 
+                WHERE LOWER(artist_name) = LOWER(?) AND LOWER(album_title) = LOWER(?)
+                LIMIT 1
+            """, (artist, title)).fetchone()
+
+            return result is not None
+
+    def is_album_in_library(self, artist: str, title: str) -> Dict[str, bool]:
+        """Check if album exists in either Lidarr or Plex libraries."""
+        return {
+            'in_lidarr': self.is_album_in_lidarr(artist, title),
+            'in_plex': self.is_album_in_plex(artist, title),
+            'in_any_library': self.is_album_in_lidarr(artist, title) or self.is_album_in_plex(artist, title)
+        }
+
+    def get_library_stats(self) -> Dict[str, Any]:
+        """Get comprehensive library statistics."""
+        with self._get_connection() as conn:
+            # Lidarr stats
+            lidarr_total = conn.execute("SELECT COUNT(*) as count FROM lidarr_albums").fetchone()['count']
+            lidarr_monitored = conn.execute("SELECT COUNT(*) as count FROM lidarr_albums WHERE monitored = 1").fetchone()['count']
+            lidarr_downloaded = conn.execute("SELECT COUNT(*) as count FROM lidarr_albums WHERE status = 'downloaded'").fetchone()['count']
+
+            # Plex stats
+            plex_total = conn.execute("SELECT COUNT(*) as count FROM plex_albums").fetchone()['count']
+
+            # Recent sync info
+            last_lidarr_sync = conn.execute("""
+                SELECT * FROM library_syncs 
+                WHERE sync_type IN ('lidarr', 'both') 
+                ORDER BY started_at DESC LIMIT 1
+            """).fetchone()
+
+            last_plex_sync = conn.execute("""
+                SELECT * FROM library_syncs 
+                WHERE sync_type IN ('plex', 'both') 
+                ORDER BY started_at DESC LIMIT 1
+            """).fetchone()
+
+            return {
+                'lidarr': {
+                    'total_albums': lidarr_total,
+                    'monitored_albums': lidarr_monitored,
+                    'downloaded_albums': lidarr_downloaded,
+                    'last_sync': dict(last_lidarr_sync) if last_lidarr_sync else None
+                },
+                'plex': {
+                    'total_albums': plex_total,
+                    'last_sync': dict(last_plex_sync) if last_plex_sync else None
+                },
+                'combined': {
+                    'total_cached_albums': lidarr_total + plex_total
+                }
+            }
+
+    def get_library_sync_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get library sync history."""
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT * FROM library_syncs 
+                ORDER BY started_at DESC 
+                LIMIT ?
+            """, (limit,)).fetchall()
+
+            return [dict(row) for row in rows]
+
+    def cleanup_old_library_cache(self, days_old: int = 7) -> Dict[str, int]:
+        """Clean up library cache entries that haven't been updated recently."""
+        cutoff_date = datetime.now() - timedelta(days=days_old)
+
+        with self._get_connection() as conn:
+            # Count what will be removed
+            lidarr_count = conn.execute("""
+                SELECT COUNT(*) as count FROM lidarr_albums WHERE last_updated < ?
+            """, (cutoff_date,)).fetchone()['count']
+
+            plex_count = conn.execute("""
+                SELECT COUNT(*) as count FROM plex_albums WHERE last_updated < ?
+            """, (cutoff_date,)).fetchone()['count']
+
+            # Remove old entries
+            conn.execute("DELETE FROM lidarr_albums WHERE last_updated < ?", (cutoff_date,))
+            conn.execute("DELETE FROM plex_albums WHERE last_updated < ?", (cutoff_date,))
+
+            conn.commit()
+
+        return {
+            'lidarr_removed': lidarr_count,
+            'plex_removed': plex_count,
+            'total_removed': lidarr_count + plex_count
+        }
 
     def _row_to_album_dict(self, row) -> Dict[str, Any]:
         """Convert database row to album dictionary."""

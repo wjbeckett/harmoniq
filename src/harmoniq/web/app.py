@@ -1,6 +1,6 @@
 """
 FastAPI Web Application for Harmoniq
-Updated with template rendering and static file serving
+Updated with template rendering, static file serving, and library sync management
 """
 
 from fastapi import FastAPI, Request
@@ -9,11 +9,15 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 import os
 from pathlib import Path
+import logging
 
 from .routes import dashboard, status, recommendations_api
 from ..recommendation_manager import AlbumRecommendationManager, StatsTracker
 from ..discovery_library_grower import AlbumDiscoveryEngine
-import logging
+from ..library_sync_manager import LibrarySyncManager  # New import
+from ..plex_client import PlexClient  # New import
+from ..lidarr_client import LidarrClient  # New import
+from ..database import HarmoniqDatabase  # New import
 from .. import config  # Import your config module
 
 # Configure logging
@@ -33,6 +37,69 @@ def create_app() -> FastAPI:
 
     # Get config directory
     config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
+
+    # Initialize database
+    try:
+        database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
+        app.state.database = database
+        logger.info("Web app: Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize database: {e}")
+        app.state.database = None
+
+    # Initialize Plex client
+    plex_client = None
+    try:
+        if config.PLEX_URL and config.PLEX_TOKEN:
+            plex_client = PlexClient(base_url=config.PLEX_URL, token=config.PLEX_TOKEN)
+            if plex_client.connect():
+                app.state.plex_client = plex_client
+                logger.info("Web app: Plex client initialized successfully")
+            else:
+                logger.warning("Web app: Plex client connection failed")
+                app.state.plex_client = None
+        else:
+            logger.warning("Web app: Plex configuration not found or incomplete")
+            app.state.plex_client = None
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize Plex client: {e}")
+        app.state.plex_client = None
+
+    # Initialize Lidarr client
+    lidarr_client = None
+    try:
+        if config.LIDARR_URL and config.LIDARR_API_KEY:
+            lidarr_client = LidarrClient(
+                base_url=config.LIDARR_URL, api_key=config.LIDARR_API_KEY
+            )
+            if lidarr_client.test_connection():
+                app.state.lidarr_client = lidarr_client
+                logger.info("Web app: Lidarr client initialized successfully")
+            else:
+                logger.warning("Web app: Lidarr client connection failed")
+                app.state.lidarr_client = None
+        else:
+            logger.warning("Web app: Lidarr configuration not found or incomplete")
+            app.state.lidarr_client = None
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize Lidarr client: {e}")
+        app.state.lidarr_client = None
+
+    # Initialize Library Sync Manager
+    sync_manager = None
+    if database and (plex_client or lidarr_client):
+        try:
+            sync_manager = LibrarySyncManager(plex_client, lidarr_client, database)
+            app.state.sync_manager = sync_manager
+            logger.info("Web app: Library Sync Manager initialized successfully")
+        except Exception as e:
+            logger.error(f"Web app: Failed to initialize Library Sync Manager: {e}")
+            app.state.sync_manager = None
+    else:
+        logger.warning(
+            "Web app: Cannot initialize sync manager - missing database or clients"
+        )
+        app.state.sync_manager = None
 
     # Initialize recommendation manager for web app
     try:
@@ -55,7 +122,10 @@ def create_app() -> FastAPI:
 
     # Initialize discovery engine for web app
     try:
-        discovery_engine = AlbumDiscoveryEngine(config, stats_tracker)
+        # Pass the sync manager to the discovery engine
+        discovery_engine = AlbumDiscoveryEngine(
+            config, stats_tracker, sync_manager=sync_manager
+        )
         app.state.discovery_engine = discovery_engine
         logger.info("Web app: Discovery engine initialized successfully")
     except Exception as e:
@@ -80,6 +150,31 @@ def create_app() -> FastAPI:
     app.include_router(
         recommendations_api.router, prefix="/api", tags=["Recommendations"]
     )
+
+    # Add Library Sync API routes
+    @app.get("/api/sync/status")
+    async def get_sync_status():
+        """Get current library sync status."""
+        if not app.state.sync_manager:
+            return {"error": "Sync manager not available"}
+
+        return app.state.sync_manager.get_sync_status()
+
+    @app.post("/api/sync/force")
+    async def force_sync():
+        """Force a full library sync."""
+        if not app.state.sync_manager:
+            return {"error": "Sync manager not available"}
+
+        return app.state.sync_manager.force_full_sync()
+
+    @app.get("/api/sync/check/{mbid}")
+    async def check_album_in_library(mbid: str):
+        """Check if an album exists in any library."""
+        if not app.state.sync_manager:
+            return {"error": "Sync manager not available"}
+
+        return app.state.sync_manager.is_album_in_library(mbid)
 
     # HTML Routes (Dashboard Pages)
     @app.get("/", response_class=HTMLResponse)
@@ -116,5 +211,53 @@ def create_app() -> FastAPI:
     async def health_check():
         """Health check endpoint."""
         return {"status": "healthy", "service": "harmoniq-web", "version": "1.0.0"}
+
+    # Startup event
+    @app.on_event("startup")
+    async def startup_event():
+        """Run startup tasks when the application starts."""
+        logger.info("🚀 Harmoniq Web Application starting up...")
+
+        # Perform library sync on startup
+        if app.state.sync_manager:
+            try:
+                logger.info("Starting initial library sync...")
+                sync_result = app.state.sync_manager.startup_sync()
+
+                if sync_result["success"]:
+                    logger.info(
+                        f"✅ Startup sync completed: {sync_result.get('total_unique_albums', 0)} unique albums cached"
+                    )
+
+                    # Start background sync (every 6 hours)
+                    app.state.sync_manager.start_background_sync(interval_hours=6)
+                    logger.info("🔄 Background sync scheduled (every 6 hours)")
+                else:
+                    logger.error(
+                        f"❌ Startup sync failed: {sync_result.get('error', 'Unknown error')}"
+                    )
+                    logger.info("Continuing without library cache...")
+
+            except Exception as e:
+                logger.error(f"❌ Startup sync error: {e}")
+                logger.info("Continuing without library cache...")
+        else:
+            logger.warning("⚠️ Sync manager not available - skipping library sync")
+
+    # Shutdown event
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Clean up resources when the application shuts down."""
+        logger.info("🛑 Harmoniq Web Application shutting down...")
+
+        # Stop background sync
+        if app.state.sync_manager:
+            try:
+                app.state.sync_manager.stop_background_sync()
+                logger.info("✅ Background sync stopped")
+            except Exception as e:
+                logger.error(f"Error stopping background sync: {e}")
+
+        logger.info("👋 Harmoniq Web Application shutdown complete")
 
     return app
