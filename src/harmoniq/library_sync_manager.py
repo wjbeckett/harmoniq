@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Set, Any
 from dataclasses import dataclass
 import threading
 import time
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -167,29 +168,63 @@ class LibrarySyncManager:
             "in_any_library": mbid in self._plex_mbids or mbid in self._lidarr_mbids,
         }
 
+    def _normalize_string(self, text: str) -> str:
+        """Normalize string for comparison - handle Unicode and special characters."""
+        if not text:
+            return ""
+
+        # Normalize Unicode characters
+        normalized = unicodedata.normalize("NFKD", text)
+
+        # Convert to lowercase and strip whitespace
+        normalized = normalized.lower().strip()
+
+        # Replace common Unicode characters with ASCII equivalents
+        replacements = {
+            """: "'",  # Unicode apostrophe to ASCII
+            """: "'",  # Another Unicode apostrophe
+            '"': '"',  # Unicode quote to ASCII
+            '"': '"',  # Another Unicode quote
+            "–": "-",  # En-dash to hyphen
+            "—": "-",  # Em-dash to hyphen
+            "‐": "-",  # Unicode hyphen to ASCII hyphen
+            "＋": "+",  # Full-width plus to ASCII plus
+            "＆": "&",  # Full-width ampersand to ASCII
+            "&amp;": "&",  # HTML entity to ASCII
+            " and ": " & ",  # "and" to ampersand for consistency
+            " And ": " & ",  # "And" to ampersand
+            " AND ": " & ",  # "AND" to ampersand
+        }
+
+        for unicode_char, ascii_char in replacements.items():
+            normalized = normalized.replace(unicode_char, ascii_char)
+
+        return normalized
+
     def album_exists_by_name(self, artist: str, title: str) -> Dict[str, bool]:
         """Check if album exists by artist + title matching (fallback when no MBID)."""
         try:
-            # Normalize for comparison
-            search_artist = artist.lower().strip()
-            search_title = title.lower().strip()
+            # Normalize for comparison - handle Unicode characters
+            search_artist = self._normalize_string(artist)
+            search_title = self._normalize_string(title)
 
             # Check Plex albums
             plex_albums = self.database.get_plex_albums()
             in_plex = False
             for album in plex_albums:
-                plex_artist = album.get("artist_name", "").lower().strip()
-                plex_title = album.get("album_title", "").lower().strip()
+                plex_artist = self._normalize_string(album.get("artist_name", ""))
+                plex_title = self._normalize_string(album.get("album_title", ""))
+
                 if plex_artist == search_artist and plex_title == search_title:
                     in_plex = True
                     break
 
-            # Check Lidarr albums
+            # Check Lidarr albums (same normalization)
             lidarr_albums = self.database.get_lidarr_albums()
             in_lidarr = False
             for album in lidarr_albums:
-                lidarr_artist = album.get("artist_name", "").lower().strip()
-                lidarr_title = album.get("album_title", "").lower().strip()
+                lidarr_artist = self._normalize_string(album.get("artist_name", ""))
+                lidarr_title = self._normalize_string(album.get("album_title", ""))
                 if lidarr_artist == search_artist and lidarr_title == search_title:
                     in_lidarr = True
                     break
