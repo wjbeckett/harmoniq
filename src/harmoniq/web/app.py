@@ -52,12 +52,6 @@ def create_app() -> FastAPI:
     try:
         if config.PLEX_URL and config.PLEX_TOKEN:
             plex_client = PlexClient(baseurl=config.PLEX_URL, token=config.PLEX_TOKEN)
-            if plex_client.connect():
-                app.state.plex_client = plex_client
-                logger.info("Web app: Plex client initialized successfully")
-            else:
-                logger.warning("Web app: Plex client connection failed")
-                app.state.plex_client = None
         else:
             logger.warning("Web app: Plex configuration not found or incomplete")
             app.state.plex_client = None
