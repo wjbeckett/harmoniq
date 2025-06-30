@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import threading
 import time
 import unicodedata
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -173,31 +174,37 @@ class LibrarySyncManager:
         if not text:
             return ""
 
-        # Normalize Unicode characters
-        normalized = unicodedata.normalize("NFKD", text)
+        # First, normalize Unicode characters to decomposed form, then recompose
+        normalized = unicodedata.normalize("NFKC", text)
 
         # Convert to lowercase and strip whitespace
         normalized = normalized.lower().strip()
 
-        # Replace common Unicode characters with ASCII equivalents
+        # Replace ALL types of quotes and apostrophes with standard ASCII
+        quote_chars = [""", """, '"', '"', "`", "´", "′", "″"]
+        for quote_char in quote_chars:
+            normalized = normalized.replace(quote_char, "'")
+
+        # Replace ALL types of dashes and hyphens with standard ASCII
+        dash_chars = ["–", "—", "‐", "−", "⁻"]
+        for dash_char in dash_chars:
+            normalized = normalized.replace(dash_char, "-")
+
+        # Replace other common Unicode characters
         replacements = {
-            """: "'",  # Unicode apostrophe to ASCII
-            """: "'",  # Another Unicode apostrophe
-            '"': '"',  # Unicode quote to ASCII
-            '"': '"',  # Another Unicode quote
-            "–": "-",  # En-dash to hyphen
-            "—": "-",  # Em-dash to hyphen
-            "‐": "-",  # Unicode hyphen to ASCII hyphen
-            "＋": "+",  # Full-width plus to ASCII plus
-            "＆": "&",  # Full-width ampersand to ASCII
-            "&amp;": "&",  # HTML entity to ASCII
-            " and ": " & ",  # "and" to ampersand for consistency
-            " And ": " & ",  # "And" to ampersand
-            " AND ": " & ",  # "AND" to ampersand
+            "＋": "+",  # Full-width plus
+            "＆": "&",  # Full-width ampersand
+            "&amp;": "&",  # HTML entity
+            " and ": " & ",  # Normalize "and" to "&"
+            " And ": " & ",
+            " AND ": " & ",
         }
 
         for unicode_char, ascii_char in replacements.items():
             normalized = normalized.replace(unicode_char, ascii_char)
+
+        # Remove extra whitespace
+        normalized = re.sub(r"\s+", " ", normalized).strip()
 
         return normalized
 
