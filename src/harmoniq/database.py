@@ -960,6 +960,76 @@ class HarmoniqDatabase:
 
         return stats
 
+    def get_plex_albums(self) -> List[Dict[str, Any]]:
+        """Get all Plex albums from cache."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT plex_id, artist_name, album_title, year, rating_key, guid,
+                    thumb, art, duration, track_count, date_added, library_section_id,
+                    last_updated, raw_data
+                FROM plex_albums
+                ORDER BY artist_name, album_title
+            """
+            )
+
+            albums = []
+            for row in cursor.fetchall():
+                album = {
+                    "plex_id": row[0],
+                    "artist_name": row[1],
+                    "album_title": row[2],
+                    "year": row[3],
+                    "rating_key": row[4],
+                    "guid": row[5],
+                    "thumb": row[6],
+                    "art": row[7],
+                    "duration": row[8],
+                    "track_count": row[9],
+                    "date_added": row[10],
+                    "library_section_id": row[11],
+                    "last_updated": row[12],
+                    "raw_data": json.loads(row[13]) if row[13] else {},
+                }
+                albums.append(album)
+
+            return albums
+
+    def get_lidarr_albums(self) -> List[Dict[str, Any]]:
+        """Get all Lidarr albums from cache."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT lidarr_id, artist_name, album_title, artist_mbid, album_mbid,
+                    status, monitored, quality_profile_id, release_date, path,
+                    size_on_disk, date_added, last_updated, raw_data
+                FROM lidarr_albums
+                ORDER BY artist_name, album_title
+            """
+            )
+
+            albums = []
+            for row in cursor.fetchall():
+                album = {
+                    "lidarr_id": row[0],
+                    "artist_name": row[1],
+                    "album_title": row[2],
+                    "artist_mbid": row[3],
+                    "album_mbid": row[4],
+                    "status": row[5],
+                    "monitored": row[6],
+                    "quality_profile_id": row[7],
+                    "release_date": row[8],
+                    "path": row[9],
+                    "size_on_disk": row[10],
+                    "date_added": row[11],
+                    "last_updated": row[12],
+                    "raw_data": json.loads(row[13]) if row[13] else {},
+                }
+                albums.append(album)
+
+            return albums
+
     def is_album_in_lidarr(self, artist: str, title: str) -> bool:
         """Check if album exists in Lidarr library cache."""
         with self._get_connection() as conn:
