@@ -16,15 +16,6 @@ import os
 logger = logging.getLogger(__name__)
 
 
-class LibrarySyncStatus(Enum):
-    """Status values for library sync operations."""
-
-    STARTED = "started"
-    SUCCESS = "success"
-    PARTIAL = "partial"  # Some libraries failed
-    FAILED = "failed"
-
-
 class RecommendationStatus(Enum):
     """Status enum for album recommendations."""
 
@@ -39,6 +30,7 @@ class RecommendationStatus(Enum):
 class LibrarySyncStatus(Enum):
     """Status enum for library sync operations."""
 
+    STARTED = "started"
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
@@ -797,6 +789,18 @@ class HarmoniqDatabase:
             )
             conn.commit()
 
+    def _serialize_album_data(self, album_data: Dict[str, Any]) -> str:
+        """Convert album data to JSON, handling datetime objects."""
+        serializable_data = {}
+        for key, value in album_data.items():
+            if isinstance(value, datetime):
+                serializable_data[key] = value.isoformat()
+            elif hasattr(value, "isoformat"):  # Handle other datetime-like objects
+                serializable_data[key] = value.isoformat()
+            else:
+                serializable_data[key] = value
+        return json.dumps(serializable_data)
+
     def sync_lidarr_albums(self, albums: List[Dict[str, Any]]) -> Dict[str, int]:
         """Sync Lidarr albums to database cache."""
         stats = {"added": 0, "updated": 0, "total": len(albums)}
@@ -835,7 +839,7 @@ class HarmoniqDatabase:
                                 album.get("path", ""),
                                 album.get("sizeOnDisk", 0),
                                 album.get("dateAdded"),
-                                json.dumps(album),
+                                self._serialize_album_data(album),
                                 album["id"],
                             ),
                         )
@@ -863,7 +867,7 @@ class HarmoniqDatabase:
                                 album.get("path", ""),
                                 album.get("sizeOnDisk", 0),
                                 album.get("dateAdded"),
-                                json.dumps(album),
+                                self._serialize_album_data(album),
                             ),
                         )
                         stats["added"] += 1
@@ -915,7 +919,7 @@ class HarmoniqDatabase:
                                 album.get("leafCount"),
                                 album.get("addedAt"),
                                 album.get("librarySectionID"),
-                                json.dumps(album),
+                                self._serialize_album_data(album),
                                 album["ratingKey"],
                             ),
                         )
@@ -942,7 +946,7 @@ class HarmoniqDatabase:
                                 album.get("leafCount"),
                                 album.get("addedAt"),
                                 album.get("librarySectionID"),
-                                json.dumps(album),
+                                self._serialize_album_data(album),
                             ),
                         )
                         stats["added"] += 1
