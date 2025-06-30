@@ -11,6 +11,8 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+from .database import LibrarySyncStatus
+
 
 class LidarrClient:
     """Client for interacting with Lidarr API."""
@@ -454,7 +456,7 @@ class LidarrClient:
                 logger.warning("No albums found in Lidarr library")
                 database.complete_library_sync(
                     sync_id,
-                    database.LibrarySyncStatus.SUCCESS,
+                    LibrarySyncStatus.SUCCESS,
                     {
                         "started_at": sync_start_time.isoformat(),
                         "albums_synced": 0,
@@ -477,7 +479,7 @@ class LidarrClient:
             # Complete sync tracking
             database.complete_library_sync(
                 sync_id,
-                database.LibrarySyncStatus.SUCCESS,
+                LibrarySyncStatus.SUCCESS,
                 {
                     "started_at": sync_start_time.isoformat(),
                     "albums_synced": sync_stats["total"],
