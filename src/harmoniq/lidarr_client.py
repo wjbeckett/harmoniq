@@ -247,14 +247,46 @@ class LidarrClient:
     def get_all_albums(self):
         """Fetch all monitored albums from Lidarr."""
         try:
-            logger.info("Fetching all monitored albums from Lidarr library...")
-            # Add monitored=true filter
-            response = self._make_request("GET", "/album", params={"monitored": "true"})
+            logger.info("Fetching all albums from Lidarr library...")
+            response = self._make_request("GET", "/album")
 
             if response:
-                albums = response
-                logger.debug(f"Retrieved {len(albums)} monitored albums from Lidarr")
-                return albums
+                all_albums = response
+                logger.debug(f"Retrieved {len(all_albums)} total albums from Lidarr")
+
+                # DEBUG: Check monitored status distribution
+                logger.info("🚨 LIDARR_DEBUG_START 🚨")
+                monitored_count = 0
+                unmonitored_count = 0
+                missing_field_count = 0
+
+                for album in all_albums[:10]:  # Check first 10 albums
+                    if "monitored" not in album:
+                        missing_field_count += 1
+                        logger.info(
+                            f"🚨 LIDARR_DEBUG: Album missing 'monitored' field: {album.get('title', 'Unknown')} by {album.get('artist', {}).get('artistName', 'Unknown')}"
+                        )
+                    elif album.get("monitored"):
+                        monitored_count += 1
+                        logger.info(
+                            f"🚨 LIDARR_DEBUG: ✅ Monitored: {album.get('title', 'Unknown')} by {album.get('artist', {}).get('artistName', 'Unknown')}"
+                        )
+                    else:
+                        unmonitored_count += 1
+                        logger.info(
+                            f"🚨 LIDARR_DEBUG: ❌ Unmonitored: {album.get('title', 'Unknown')} by {album.get('artist', {}).get('artistName', 'Unknown')}"
+                        )
+
+                # Count all monitored albums
+                monitored_albums = [
+                    album for album in all_albums if album.get("monitored", False)
+                ]
+                logger.info(
+                    f"🚨 LIDARR_DEBUG: 📊 Total: {len(all_albums)}, Monitored: {len(monitored_albums)}, Unmonitored: {len(all_albums) - len(monitored_albums)}"
+                )
+                logger.info("🚨 LIDARR_DEBUG_END 🚨")
+
+                return monitored_albums
             return []
         except Exception as e:
             logger.error(f"Error fetching monitored albums from Lidarr: {e}")

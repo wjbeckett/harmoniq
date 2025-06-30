@@ -204,9 +204,13 @@ class LibrarySyncManager:
     def album_exists_by_name(self, artist: str, title: str) -> Dict[str, bool]:
         """Check if album exists by artist + title matching (fallback when no MBID)."""
         try:
-            # Normalize for comparison - handle Unicode characters
+            # Normalize for comparison
             search_artist = self._normalize_string(artist)
             search_title = self._normalize_string(title)
+
+            # DEBUG: Log for Angels & Airwaves specifically
+            if "angels" in search_artist.lower():
+                logger.info(f"🔍 SEARCHING FOR: '{search_artist}' - '{search_title}'")
 
             # Check Plex albums
             plex_albums = self.database.get_plex_albums()
@@ -215,7 +219,18 @@ class LibrarySyncManager:
                 plex_artist = self._normalize_string(album.get("artist_name", ""))
                 plex_title = self._normalize_string(album.get("album_title", ""))
 
+                # DEBUG: Log Angels & Airwaves comparisons
+                if "angels" in plex_artist.lower() or "angels" in search_artist.lower():
+                    logger.info(
+                        f"🔍 COMPARING: '{plex_artist}' - '{plex_title}' vs '{search_artist}' - '{search_title}'"
+                    )
+                    logger.info(
+                        f"🔍 MATCH: artist={plex_artist == search_artist}, title={plex_title == search_title}"
+                    )
+
                 if plex_artist == search_artist and plex_title == search_title:
+                    if "angels" in search_artist.lower():
+                        logger.info(f"✅ FOUND PLEX MATCH!")
                     in_plex = True
                     break
 
