@@ -5,7 +5,7 @@ Handles fetching album type information for accurate filtering.
 
 import logging
 import musicbrainzngs
-from typing import Optional, Dict, List, Set
+from typing import Optional, Dict, List, Set, Any
 from time import sleep
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class MusicBrainzClient:
 
     def get_album_type_by_release_group_mbid(
         self, release_group_mbid: str
-    ) -> Optional[Dict[str, any]]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Get album type information by MusicBrainz Release Group ID.
 
