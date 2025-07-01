@@ -174,6 +174,8 @@ class LibrarySyncManager:
         if not text:
             return ""
 
+        original = text
+
         # First, normalize Unicode characters to decomposed form, then recompose
         normalized = unicodedata.normalize("NFKC", text)
 
@@ -190,10 +192,20 @@ class LibrarySyncManager:
             "′",
             "″",
             "'",
-            "'",
-        ]  # Added the missing ones!
+            "'",  # These are the key ones!
+        ]
         for quote_char in quote_chars:
+            if quote_char in normalized:
+                logger.debug(
+                    f"🔧 REPLACING '{quote_char}' (ord={ord(quote_char)}) with standard apostrophe"
+                )
             normalized = normalized.replace(quote_char, "'")
+
+        # Debug for Angels & Airwaves
+        if "whisper" in normalized:
+            logger.debug(f"🔧 NORMALIZATION: '{original}' -> '{normalized}'")
+            logger.debug(f"🔧 BEFORE HEX: {original.encode('utf-8').hex()}")
+            logger.debug(f"🔧 AFTER HEX: {normalized.encode('utf-8').hex()}")
 
         # Replace ALL types of dashes and hyphens with standard ASCII
         dash_chars = ["–", "—", "‐", "−", "⁻"]
