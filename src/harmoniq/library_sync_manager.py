@@ -181,7 +181,17 @@ class LibrarySyncManager:
         normalized = normalized.lower().strip()
 
         # Replace ALL types of quotes and apostrophes with standard ASCII
-        quote_chars = [""", """, '"', '"', "`", "´", "′", "″"]
+        quote_chars = [
+            """, """,
+            '"',
+            '"',
+            "`",
+            "´",
+            "′",
+            "″",
+            "'",
+            "'",
+        ]  # Added the missing ones!
         for quote_char in quote_chars:
             normalized = normalized.replace(quote_char, "'")
 
