@@ -145,6 +145,67 @@ class MusicBrainzClient:
             )
             return None
 
+    def search_releases_by_name(
+        self, album_name: str, artist_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for all releases matching album name and artist.
+        Returns list of releases sorted by priority (Albums first, then Singles).
+        """
+        try:
+            self._rate_limit()
+
+            logger.debug(f"Searching MusicBrainz for '{album_name}' by '{artist_name}'")
+
+            # Search for release groups (not individual releases)
+            result = musicbrainzngs.search_release_groups(
+                query=f'releasegroup:"{album_name}" AND artist:"{artist_name}"',
+                limit=10,  # Get multiple matches
+            )
+
+            if not result or "release-group-list" not in result:
+                return []
+
+            releases = []
+            for rg in result["release-group-list"]:
+                release_group_mbid = rg.get("id")
+                if not release_group_mbid:
+                    continue
+
+                # Get detailed type info
+                type_info = self.get_album_type_by_release_group_mbid(
+                    release_group_mbid
+                )
+                if type_info and type_info.get("is_studio_album", False):
+                    releases.append(
+                        {
+                            "mbid": release_group_mbid,
+                            "title": type_info.get("title", album_name),
+                            "artist": type_info.get("artist", artist_name),
+                            "primary_type": type_info.get("primary_type", ""),
+                            "secondary_types": type_info.get("secondary_types", []),
+                            "score": rg.get("score", 0),  # MusicBrainz relevance score
+                        }
+                    )
+
+            # Sort by priority: Albums first, then by score
+            def sort_priority(release):
+                type_priority = 0 if release["primary_type"] == "Album" else 1
+                return (type_priority, -release["score"])  # Lower is better
+
+            releases.sort(key=sort_priority)
+
+            logger.debug(
+                f"Found {len(releases)} matching releases for '{album_name}' by '{artist_name}'"
+            )
+            return releases
+
+        except Exception as e:
+            logger.error(
+                f"Error searching MusicBrainz for '{album_name}' by '{artist_name}': {e}"
+            )
+            return []
+
     def _is_desired_studio_album(
         self, primary_type: str, secondary_types: List[str]
     ) -> bool:
