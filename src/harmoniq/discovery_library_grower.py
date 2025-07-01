@@ -368,65 +368,48 @@ class AlbumDiscoveryEngine:
             )
 
             studio_albums = []
+            processed_album_names = set()  # Avoid duplicates
 
             for album in lastfm_albums:
-                album_mbid = album.get("mbid")
-                if not album_mbid:
-                    logger.debug(
-                        f"No MBID for album '{album['name']}' by {artist_name}, skipping type check"
-                    )
+                album_name = album["name"]
+
+                # Skip if we've already processed this album name
+                if album_name.lower() in processed_album_names:
                     continue
+                processed_album_names.add(album_name.lower())
 
-                # First try to get release group MBID from the album MBID
-                release_group_mbid = (
-                    self.musicbrainz_client.get_release_group_mbid_from_album_mbid(
-                        album_mbid
-                    )
-                )
+                album_mbid = album.get("mbid")
+                best_match = None
 
-                if release_group_mbid:
-                    # Now check if it's a studio album using the release group MBID
-                    type_info = (
-                        self.musicbrainz_client.get_album_type_by_release_group_mbid(
-                            release_group_mbid
-                        )
+                # Strategy 1: If Last.fm provided an MBID, check it first
+                if album_mbid:
+                    best_match = await self._check_album_mbid(
+                        album_mbid, album_name, artist_name
                     )
 
-                    if type_info and type_info.get("is_studio_album", False):
-                        studio_albums.append(
-                            {
-                                "title": album["name"],
-                                "artist": artist_name,
-                                "year": None,
-                                "mbid": release_group_mbid,  # Use release group MBID
-                                "type": "studio",
-                                "source": "lastfm_musicbrainz_discovery",
-                            }
-                        )
-                else:
-                    # If we can't get release group MBID, try the original MBID directly
-                    # (in case Last.fm already provided a release group MBID)
-                    type_info = (
-                        self.musicbrainz_client.get_album_type_by_release_group_mbid(
-                            album_mbid
-                        )
+                # Strategy 2: If no good match yet, search MusicBrainz by name
+                if not best_match:
+                    search_results = self.musicbrainz_client.search_releases_by_name(
+                        album_name, artist_name
                     )
-
-                    if type_info and type_info.get("is_studio_album", False):
-                        studio_albums.append(
-                            {
-                                "title": album["name"],
-                                "artist": artist_name,
-                                "year": None,
-                                "mbid": album_mbid,
-                                "type": "studio",
-                                "source": "lastfm_musicbrainz_discovery",
-                            }
-                        )
-                    else:
+                    if search_results:
+                        # Take the first result (highest priority = Album over Single)
+                        best_result = search_results[0]
+                        best_match = {
+                            "title": album_name,
+                            "artist": artist_name,
+                            "year": None,
+                            "mbid": best_result["mbid"],
+                            "type": "studio",
+                            "source": "lastfm_musicbrainz_search",
+                            "primary_type": best_result["primary_type"],
+                        }
                         logger.debug(
-                            f"Could not determine album type for '{album['name']}' by {artist_name} (MBID: {album_mbid})"
+                            f"Found {best_result['primary_type']} via search: '{album_name}' by {artist_name}"
                         )
+
+                if best_match:
+                    studio_albums.append(best_match)
 
             logger.info(f"Found {len(studio_albums)} studio albums for {artist_name}")
             return studio_albums
@@ -434,6 +417,47 @@ class AlbumDiscoveryEngine:
         except Exception as e:
             logger.error(f"Error getting albums for {artist_name}: {e}")
             return []
+
+    async def _check_album_mbid(
+        self, album_mbid: str, album_name: str, artist_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Check a specific MBID and return album info if it's a studio album."""
+        # First try to get release group MBID from the album MBID
+        release_group_mbid = (
+            self.musicbrainz_client.get_release_group_mbid_from_album_mbid(album_mbid)
+        )
+
+        if release_group_mbid:
+            type_info = self.musicbrainz_client.get_album_type_by_release_group_mbid(
+                release_group_mbid
+            )
+            if type_info and type_info.get("is_studio_album", False):
+                return {
+                    "title": album_name,
+                    "artist": artist_name,
+                    "year": None,
+                    "mbid": release_group_mbid,
+                    "type": "studio",
+                    "source": "lastfm_musicbrainz_discovery",
+                    "primary_type": type_info.get("primary_type", "Unknown"),
+                }
+
+        # Try the original MBID directly
+        type_info = self.musicbrainz_client.get_album_type_by_release_group_mbid(
+            album_mbid
+        )
+        if type_info and type_info.get("is_studio_album", False):
+            return {
+                "title": album_name,
+                "artist": artist_name,
+                "year": None,
+                "mbid": album_mbid,
+                "type": "studio",
+                "source": "lastfm_musicbrainz_discovery",
+                "primary_type": type_info.get("primary_type", "Unknown"),
+            }
+
+        return None
 
     async def _filter_albums(
         self, albums: List[Dict[str, Any]]

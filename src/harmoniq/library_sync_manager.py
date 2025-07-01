@@ -228,6 +228,9 @@ class LibrarySyncManager:
             # DEBUG: Log for Angels & Airwaves specifically
             if "angels" in search_artist.lower():
                 logger.info(f"🔍 SEARCHING FOR: '{search_artist}' - '{search_title}'")
+                logger.info(
+                    f"🔍 SEARCH HEX: title={search_title.encode('utf-8').hex()}"
+                )
                 # Add hex debugging to see invisible characters
                 logger.info(
                     f"🔍 SEARCH HEX: artist={search_artist.encode('utf-8').hex()}"
