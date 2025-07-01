@@ -283,9 +283,24 @@ class LibrarySyncManager:
                             zip(plex_title, search_title)
                         ):
                             if p_char != s_char:
-                                logger.info(
-                                    f"   Diff at pos {i}: '{p_char}' (ord={ord(p_char)}) vs '{s_char}' (ord={ord(s_char)})"
-                                )
+                                try:
+                                    p_ord = (
+                                        ord(p_char)
+                                        if len(p_char) == 1
+                                        else f"multi-byte: {p_char.encode('utf-8').hex()}"
+                                    )
+                                    s_ord = (
+                                        ord(s_char)
+                                        if len(s_char) == 1
+                                        else f"multi-byte: {s_char.encode('utf-8').hex()}"
+                                    )
+                                    logger.info(
+                                        f"   Diff at pos {i}: '{p_char}' ({p_ord}) vs '{s_char}' ({s_ord})"
+                                    )
+                                except Exception as e:
+                                    logger.info(
+                                        f"   Diff at pos {i}: '{p_char}' vs '{s_char}' (error getting ord: {e})"
+                                    )
 
                 if plex_artist == search_artist and plex_title == search_title:
                     if "angels" in search_artist.lower():
