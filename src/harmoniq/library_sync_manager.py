@@ -263,44 +263,12 @@ class LibrarySyncManager:
                     logger.info(
                         f"🔍 COMPARING: '{plex_artist}' - '{plex_title}' vs '{search_artist}' - '{search_title}'"
                     )
-                    # Add hex debugging for the failing comparison
-                    logger.info(
-                        f"🔍 PLEX HEX: artist={plex_artist.encode('utf-8').hex()}"
-                    )
                     logger.info(
                         f"🔍 PLEX HEX: title={plex_title.encode('utf-8').hex()}"
                     )
                     logger.info(
                         f"🔍 MATCH: artist={plex_artist == search_artist}, title={plex_title == search_title}"
                     )
-
-                    # Character-by-character comparison for title
-                    if plex_artist == search_artist and plex_title != search_title:
-                        logger.info(f"🔍 TITLE MISMATCH DETAILS:")
-                        logger.info(f"   Plex title length: {len(plex_title)}")
-                        logger.info(f"   Search title length: {len(search_title)}")
-                        for i, (p_char, s_char) in enumerate(
-                            zip(plex_title, search_title)
-                        ):
-                            if p_char != s_char:
-                                try:
-                                    p_ord = (
-                                        ord(p_char)
-                                        if len(p_char) == 1
-                                        else f"multi-byte: {p_char.encode('utf-8').hex()}"
-                                    )
-                                    s_ord = (
-                                        ord(s_char)
-                                        if len(s_char) == 1
-                                        else f"multi-byte: {s_char.encode('utf-8').hex()}"
-                                    )
-                                    logger.info(
-                                        f"   Diff at pos {i}: '{p_char}' ({p_ord}) vs '{s_char}' ({s_ord})"
-                                    )
-                                except Exception as e:
-                                    logger.info(
-                                        f"   Diff at pos {i}: '{p_char}' vs '{s_char}' (error getting ord: {e})"
-                                    )
 
                 if plex_artist == search_artist and plex_title == search_title:
                     if "angels" in search_artist.lower():
