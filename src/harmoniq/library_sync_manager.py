@@ -170,54 +170,59 @@ class LibrarySyncManager:
         }
 
     def _normalize_string(self, text: str) -> str:
-    """Normalize string for comparison - handle Unicode and special characters."""
-    if not text:
-        return ""
-    
-    # First, normalize Unicode characters to decomposed form, then recompose
-    normalized = unicodedata.normalize("NFKC", text)
+        """Normalize string for comparison - handle Unicode and special characters."""
+        if not text:
+            return ""
 
-    # Convert to lowercase and strip whitespace
-    normalized = normalized.lower().strip()
+        # First, normalize Unicode characters to decomposed form, then recompose
+        normalized = unicodedata.normalize("NFKC", text)
 
-    # Replace ALL types of quotes and apostrophes with standard ASCII
-    quote_chars = [
-        """, """,
-        '"', '"',
-        "`", "´", "′", "″",
-        "'", "'",  # These are the key ones!
-    ]
-    for quote_char in quote_chars:
-        if quote_char in normalized:
-            pass
-        normalized = normalized.replace(quote_char, "'")
+        # Convert to lowercase and strip whitespace
+        normalized = normalized.lower().strip()
 
-        # Debug for Angels & Airwaves
-        if "whisper" in normalized:
-            logger.debug(f"🔧 AFTER HEX: {normalized.encode('utf-8').hex()}")
+        # Replace ALL types of quotes and apostrophes with standard ASCII
+        quote_chars = [
+            """, """,
+            '"',
+            '"',
+            "`",
+            "´",
+            "′",
+            "″",
+            "'",
+            "'",  # These are the key ones!
+        ]
+        for quote_char in quote_chars:
+            if quote_char in normalized:
+                pass
+            normalized = normalized.replace(quote_char, "'")
 
-        # Replace ALL types of dashes and hyphens with standard ASCII
-        dash_chars = ["–", "—", "‐", "−", "⁻"]
-        for dash_char in dash_chars:
-            normalized = normalized.replace(dash_char, "-")
+            # Debug for Angels & Airwaves
+            if "whisper" in normalized:
+                logger.debug(f"🔧 AFTER HEX: {normalized.encode('utf-8').hex()}")
 
-        # Replace other common Unicode characters
-        replacements = {
-            "＋": "+",  # Full-width plus
-            "＆": "&",  # Full-width ampersand
-            "&amp;": "&",  # HTML entity
-            " and ": " & ",  # Normalize "and" to "&"
-            " And ": " & ",
-            " AND ": " & ",
-        }
+            # Replace ALL types of dashes and hyphens with standard ASCII
+            dash_chars = ["–", "—", "‐", "−", "⁻"]
+            for dash_char in dash_chars:
+                normalized = normalized.replace(dash_char, "-")
 
-        for unicode_char, ascii_char in replacements.items():
-            normalized = normalized.replace(unicode_char, ascii_char)
+            # Replace other common Unicode characters
+            replacements = {
+                "＋": "+",  # Full-width plus
+                "＆": "&",  # Full-width ampersand
+                "&amp;": "&",  # HTML entity
+                " and ": " & ",  # Normalize "and" to "&"
+                " And ": " & ",
+                " AND ": " & ",
+            }
 
-        # Remove extra whitespace
-        normalized = re.sub(r"\s+", " ", normalized).strip()
+            for unicode_char, ascii_char in replacements.items():
+                normalized = normalized.replace(unicode_char, ascii_char)
 
-        return normalized
+            # Remove extra whitespace
+            normalized = re.sub(r"\s+", " ", normalized).strip()
+
+            return normalized
 
     def album_exists_by_name(self, artist: str, title: str) -> Dict[str, bool]:
         """Check if album exists by artist + title matching using cache."""
@@ -236,10 +241,12 @@ class LibrarySyncManager:
                 logger.info(f"🔍 SEARCHING FOR: '{search_artist}' - '{search_title}'")
                 logger.info(f"🔍 CACHE KEY: '{cache_key}'")
                 logger.info(f"🔍 FOUND: Plex={in_plex}, Lidarr={in_lidarr}")
-                
+
                 if not in_plex:
                     # Show some cache keys for debugging
-                    matching_keys = [k for k in self._plex_name_cache.keys() if "angels" in k]
+                    matching_keys = [
+                        k for k in self._plex_name_cache.keys() if "angels" in k
+                    ]
                     logger.info(f"🔍 Angels cache keys: {matching_keys[:3]}")
 
             return {
@@ -436,12 +443,12 @@ class LibrarySyncManager:
             # Build MBID caches (existing logic)
             self._plex_mbids = set()
             self._lidarr_mbids = set()
-            
+
             for album in plex_albums:
                 mbid = self._extract_mbid_from_plex_guid(album.get("guid", ""))
                 if mbid:
                     self._plex_mbids.add(mbid)
-                    
+
             for album in lidarr_albums:
                 mbid = album.get("album_mbid", "")
                 if mbid:
@@ -450,7 +457,7 @@ class LibrarySyncManager:
             # NEW: Build name-based caches for fast artist+title lookups
             self._plex_name_cache = {}
             self._lidarr_name_cache = {}
-            
+
             for album in plex_albums:
                 artist_name = album.get("artist_name", "")
                 album_title = album.get("album_title", "")
@@ -460,7 +467,7 @@ class LibrarySyncManager:
                     normalized_title = self._normalize_string(album_title)
                     cache_key = f"{normalized_artist}|||{normalized_title}"
                     self._plex_name_cache[cache_key] = album
-                    
+
             for album in lidarr_albums:
                 artist_name = album.get("artist_name", "")
                 album_title = album.get("album_title", "")
@@ -472,8 +479,12 @@ class LibrarySyncManager:
 
             self._cache_built = True
 
-            logger.info(f"Cache built: {len(self._plex_mbids)} Plex MBIDs, {len(self._lidarr_mbids)} Lidarr MBIDs")
-            logger.info(f"Name cache built: {len(self._plex_name_cache)} Plex names, {len(self._lidarr_name_cache)} Lidarr names")
+            logger.info(
+                f"Cache built: {len(self._plex_mbids)} Plex MBIDs, {len(self._lidarr_mbids)} Lidarr MBIDs"
+            )
+            logger.info(
+                f"Name cache built: {len(self._plex_name_cache)} Plex names, {len(self._lidarr_name_cache)} Lidarr names"
+            )
 
         except Exception as e:
             logger.error(f"Error building cache: {e}")
