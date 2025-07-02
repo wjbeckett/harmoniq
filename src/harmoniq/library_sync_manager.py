@@ -170,41 +170,30 @@ class LibrarySyncManager:
         }
 
     def _normalize_string(self, text: str) -> str:
-        """Normalize string for comparison - handle Unicode and special characters."""
-        if not text:
-            return ""
+    """Normalize string for comparison - handle Unicode and special characters."""
+    if not text:
+        return ""
+    
+    # First, normalize Unicode characters to decomposed form, then recompose
+    normalized = unicodedata.normalize("NFKC", text)
 
-        original = text
+    # Convert to lowercase and strip whitespace
+    normalized = normalized.lower().strip()
 
-        # First, normalize Unicode characters to decomposed form, then recompose
-        normalized = unicodedata.normalize("NFKC", text)
-
-        # Convert to lowercase and strip whitespace
-        normalized = normalized.lower().strip()
-
-        # Replace ALL types of quotes and apostrophes with standard ASCII
-        quote_chars = [
-            """, """,
-            '"',
-            '"',
-            "`",
-            "´",
-            "′",
-            "″",
-            "'",
-            "'",  # These are the key ones!
-        ]
-        for quote_char in quote_chars:
-            if quote_char in normalized:
-                logger.debug(
-                    f"🔧 REPLACING '{quote_char}' (ord={ord(quote_char)}) with standard apostrophe"
-                )
-            normalized = normalized.replace(quote_char, "'")
+    # Replace ALL types of quotes and apostrophes with standard ASCII
+    quote_chars = [
+        """, """,
+        '"', '"',
+        "`", "´", "′", "″",
+        "'", "'",  # These are the key ones!
+    ]
+    for quote_char in quote_chars:
+        if quote_char in normalized:
+            pass
+        normalized = normalized.replace(quote_char, "'")
 
         # Debug for Angels & Airwaves
         if "whisper" in normalized:
-            logger.debug(f"🔧 NORMALIZATION: '{original}' -> '{normalized}'")
-            logger.debug(f"🔧 BEFORE HEX: {original.encode('utf-8').hex()}")
             logger.debug(f"🔧 AFTER HEX: {normalized.encode('utf-8').hex()}")
 
         # Replace ALL types of dashes and hyphens with standard ASCII
