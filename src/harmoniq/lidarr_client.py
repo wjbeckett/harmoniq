@@ -33,6 +33,9 @@ class LidarrClient:
         self.session.headers.update(
             {"X-Api-Key": self.api_key, "Content-Type": "application/json"}
         )
+        self._albums_cache = None
+        self._cache_timestamp = None
+        self._cache_duration = 300
 
         logger.info(f"Initialized Lidarr client for {self.base_url}")
 
@@ -244,8 +247,17 @@ class LidarrClient:
             )
             return None
 
-    def get_all_albums(self):
-        """Fetch all monitored albums from Lidarr."""
+    def get_all_albums(self, use_cache=True):
+        """Fetch all monitored albums from Lidarr with optional caching."""
+        import time  # Add this import at the top of the file if not already there
+
+        # Check cache first
+        if use_cache and self._albums_cache is not None:
+            cache_age = time.time() - (self._cache_timestamp or 0)
+            if cache_age < self._cache_duration:
+                logger.debug(f"Using cached albums ({len(self._albums_cache)} albums)")
+                return self._albums_cache
+
         try:
             logger.info("Fetching all albums from Lidarr library...")
             response = self._make_request("GET", "/album")
@@ -285,6 +297,10 @@ class LidarrClient:
                     f"🚨 LIDARR_DEBUG: 📊 Total: {len(all_albums)}, Monitored: {len(monitored_albums)}, Unmonitored: {len(all_albums) - len(monitored_albums)}"
                 )
                 logger.info("🚨 LIDARR_DEBUG_END 🚨")
+
+                # ✅ ADD CACHING HERE - Store the result in cache
+                self._albums_cache = monitored_albums
+                self._cache_timestamp = time.time()
 
                 return monitored_albums
             return []
