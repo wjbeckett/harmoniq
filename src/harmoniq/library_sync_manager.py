@@ -170,41 +170,30 @@ class LibrarySyncManager:
         }
 
     def _normalize_string(self, text: str) -> str:
-        """Normalize string for comparison - handle Unicode and special characters."""
-        if not text:
-            return ""
+    """Normalize string for comparison - handle Unicode and special characters."""
+    if not text:
+        return ""
+    
+    # First, normalize Unicode characters to decomposed form, then recompose
+    normalized = unicodedata.normalize("NFKC", text)
 
-        original = text
+    # Convert to lowercase and strip whitespace
+    normalized = normalized.lower().strip()
 
-        # First, normalize Unicode characters to decomposed form, then recompose
-        normalized = unicodedata.normalize("NFKC", text)
-
-        # Convert to lowercase and strip whitespace
-        normalized = normalized.lower().strip()
-
-        # Replace ALL types of quotes and apostrophes with standard ASCII
-        quote_chars = [
-            """, """,
-            '"',
-            '"',
-            "`",
-            "´",
-            "′",
-            "″",
-            "'",
-            "'",  # These are the key ones!
-        ]
-        for quote_char in quote_chars:
-            if quote_char in normalized:
-                logger.debug(
-                    f"🔧 REPLACING '{quote_char}' (ord={ord(quote_char)}) with standard apostrophe"
-                )
-            normalized = normalized.replace(quote_char, "'")
+    # Replace ALL types of quotes and apostrophes with standard ASCII
+    quote_chars = [
+        """, """,
+        '"', '"',
+        "`", "´", "′", "″",
+        "'", "'",  # These are the key ones!
+    ]
+    for quote_char in quote_chars:
+        if quote_char in normalized:
+            pass
+        normalized = normalized.replace(quote_char, "'")
 
         # Debug for Angels & Airwaves
         if "whisper" in normalized:
-            logger.debug(f"🔧 NORMALIZATION: '{original}' -> '{normalized}'")
-            logger.debug(f"🔧 BEFORE HEX: {original.encode('utf-8').hex()}")
             logger.debug(f"🔧 AFTER HEX: {normalized.encode('utf-8').hex()}")
 
         # Replace ALL types of dashes and hyphens with standard ASCII
@@ -231,47 +220,27 @@ class LibrarySyncManager:
         return normalized
 
     def album_exists_by_name(self, artist: str, title: str) -> Dict[str, bool]:
-        """Check if album exists by artist + title matching (fallback when no MBID)."""
+        """Check if album exists by artist + title matching using cache."""
         try:
             # Normalize for comparison
             search_artist = self._normalize_string(artist)
             search_title = self._normalize_string(title)
+            cache_key = f"{search_artist}|||{search_title}"
+
+            # Use cache instead of database queries
+            in_plex = cache_key in self._plex_name_cache
+            in_lidarr = cache_key in self._lidarr_name_cache
 
             # DEBUG: Log for Angels & Airwaves specifically
             if "angels" in search_artist.lower():
                 logger.info(f"🔍 SEARCHING FOR: '{search_artist}' - '{search_title}'")
-
-            # Check Plex albums
-            plex_albums = self.database.get_plex_albums()
-            in_plex = False
-            for album in plex_albums:
-                plex_artist = self._normalize_string(album.get("artist_name", ""))
-                plex_title = self._normalize_string(album.get("album_title", ""))
-
-                # DEBUG: Log Angels & Airwaves comparisons
-                if "angels" in plex_artist.lower() or "angels" in search_artist.lower():
-                    logger.info(
-                        f"🔍 COMPARING: '{plex_artist}' - '{plex_title}' vs '{search_artist}' - '{search_title}'"
-                    )
-                    logger.info(
-                        f"🔍 MATCH: artist={plex_artist == search_artist}, title={plex_title == search_title}"
-                    )
-
-                if plex_artist == search_artist and plex_title == search_title:
-                    if "angels" in search_artist.lower():
-                        logger.info(f"✅ FOUND PLEX MATCH!")
-                    in_plex = True
-                    break
-
-            # Check Lidarr albums (same normalization)
-            lidarr_albums = self.database.get_lidarr_albums()
-            in_lidarr = False
-            for album in lidarr_albums:
-                lidarr_artist = self._normalize_string(album.get("artist_name", ""))
-                lidarr_title = self._normalize_string(album.get("album_title", ""))
-                if lidarr_artist == search_artist and lidarr_title == search_title:
-                    in_lidarr = True
-                    break
+                logger.info(f"🔍 CACHE KEY: '{cache_key}'")
+                logger.info(f"🔍 FOUND: Plex={in_plex}, Lidarr={in_lidarr}")
+                
+                if not in_plex:
+                    # Show some cache keys for debugging
+                    matching_keys = [k for k in self._plex_name_cache.keys() if "angels" in k]
+                    logger.info(f"🔍 Angels cache keys: {matching_keys[:3]}")
 
             return {
                 "in_plex": in_plex,
@@ -378,7 +347,7 @@ class LibrarySyncManager:
     def _perform_full_sync(self) -> Dict[str, Any]:
         """Perform full sync of both Plex and Lidarr."""
         start_time = time.time()
-        results = {"plex": None, "lidarr": None}
+        results = {"plex": {}, "lidarr": {}}
         errors = []
 
         # Sync Plex
@@ -456,49 +425,55 @@ class LibrarySyncManager:
         return self._quick_sync()
 
     def _build_cache(self):
-        """Build in-memory cache of album MBIDs from database."""
+        """Build in-memory cache from database."""
         try:
             logger.info("Building in-memory album cache...")
 
-            # Get Plex album MBIDs from database
+            # Get albums from database
             plex_albums = self.database.get_plex_albums()
+            lidarr_albums = self.database.get_lidarr_albums()
+
+            # Build MBID caches (existing logic)
             self._plex_mbids = set()
-
-            # DEBUG: Log first few Plex albums
-            logger.info(f"🔍 Found {len(plex_albums)} Plex albums in database")
-            for i, album in enumerate(plex_albums[:3]):  # Show first 3
-                logger.info(
-                    f"🔍 Plex album {i+1}: guid='{album.get('guid', '')}', artist='{album.get('artist_name', '')}', title='{album.get('album_title', '')}'"
-                )
-
+            self._lidarr_mbids = set()
+            
             for album in plex_albums:
-                # Extract MBID from Plex GUID if available
                 mbid = self._extract_mbid_from_plex_guid(album.get("guid", ""))
                 if mbid:
                     self._plex_mbids.add(mbid)
-
-            # Get Lidarr album MBIDs from database
-            lidarr_albums = self.database.get_lidarr_albums()
-            self._lidarr_mbids = set()
-
-            # DEBUG: Log first few Lidarr albums
-            logger.info(f"🔍 Found {len(lidarr_albums)} Lidarr albums in database")
-            for i, album in enumerate(lidarr_albums[:3]):  # Show first 3
-                logger.info(
-                    f"🔍 Lidarr album {i+1}: album_mbid='{album.get('album_mbid', '')}', artist='{album.get('artist_name', '')}', title='{album.get('album_title', '')}'"
-                )
-
+                    
             for album in lidarr_albums:
-                # Use the correct field name from your database schema
-                mbid = album.get("album_mbid", "")  # Changed from foreignAlbumId
+                mbid = album.get("album_mbid", "")
                 if mbid:
                     self._lidarr_mbids.add(mbid)
 
+            # NEW: Build name-based caches for fast artist+title lookups
+            self._plex_name_cache = {}
+            self._lidarr_name_cache = {}
+            
+            for album in plex_albums:
+                artist_name = album.get("artist_name", "")
+                album_title = album.get("album_title", "")
+                if artist_name and album_title:
+                    # Use same normalization as album_exists_by_name
+                    normalized_artist = self._normalize_string(artist_name)
+                    normalized_title = self._normalize_string(album_title)
+                    cache_key = f"{normalized_artist}|||{normalized_title}"
+                    self._plex_name_cache[cache_key] = album
+                    
+            for album in lidarr_albums:
+                artist_name = album.get("artist_name", "")
+                album_title = album.get("album_title", "")
+                if artist_name and album_title:
+                    normalized_artist = self._normalize_string(artist_name)
+                    normalized_title = self._normalize_string(album_title)
+                    cache_key = f"{normalized_artist}|||{normalized_title}"
+                    self._lidarr_name_cache[cache_key] = album
+
             self._cache_built = True
 
-            logger.info(
-                f"Cache built: {len(self._plex_mbids)} Plex MBIDs, {len(self._lidarr_mbids)} Lidarr MBIDs"
-            )
+            logger.info(f"Cache built: {len(self._plex_mbids)} Plex MBIDs, {len(self._lidarr_mbids)} Lidarr MBIDs")
+            logger.info(f"Name cache built: {len(self._plex_name_cache)} Plex names, {len(self._lidarr_name_cache)} Lidarr names")
 
         except Exception as e:
             logger.error(f"Error building cache: {e}")
