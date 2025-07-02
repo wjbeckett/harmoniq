@@ -240,16 +240,6 @@ class LibrarySyncManager:
             # DEBUG: Log for Angels & Airwaves specifically
             if "angels" in search_artist.lower():
                 logger.info(f"🔍 SEARCHING FOR: '{search_artist}' - '{search_title}'")
-                logger.info(
-                    f"🔍 SEARCH HEX: title={search_title.encode('utf-8').hex()}"
-                )
-                # Add hex debugging to see invisible characters
-                logger.info(
-                    f"🔍 SEARCH HEX: artist={search_artist.encode('utf-8').hex()}"
-                )
-                logger.info(
-                    f"🔍 SEARCH HEX: title={search_title.encode('utf-8').hex()}"
-                )
 
             # Check Plex albums
             plex_albums = self.database.get_plex_albums()
@@ -262,9 +252,6 @@ class LibrarySyncManager:
                 if "angels" in plex_artist.lower() or "angels" in search_artist.lower():
                     logger.info(
                         f"🔍 COMPARING: '{plex_artist}' - '{plex_title}' vs '{search_artist}' - '{search_title}'"
-                    )
-                    logger.info(
-                        f"🔍 PLEX HEX: title={plex_title.encode('utf-8').hex()}"
                     )
                     logger.info(
                         f"🔍 MATCH: artist={plex_artist == search_artist}, title={plex_title == search_title}"
