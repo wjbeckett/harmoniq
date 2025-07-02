@@ -193,36 +193,34 @@ class LibrarySyncManager:
             "'",  # These are the key ones!
         ]
         for quote_char in quote_chars:
-            if quote_char in normalized:
-                pass
             normalized = normalized.replace(quote_char, "'")
 
-            # Debug for Angels & Airwaves
-            if "whisper" in normalized:
-                logger.debug(f"🔧 AFTER HEX: {normalized.encode('utf-8').hex()}")
+        # Debug for Angels & Airwaves
+        if "whisper" in normalized:
+            logger.debug(f"🔧 AFTER HEX: {normalized.encode('utf-8').hex()}")
 
-            # Replace ALL types of dashes and hyphens with standard ASCII
-            dash_chars = ["–", "—", "‐", "−", "⁻"]
-            for dash_char in dash_chars:
-                normalized = normalized.replace(dash_char, "-")
+        # Replace ALL types of dashes and hyphens with standard ASCII
+        dash_chars = ["–", "—", "‐", "−", "⁻"]
+        for dash_char in dash_chars:
+            normalized = normalized.replace(dash_char, "-")
 
-            # Replace other common Unicode characters
-            replacements = {
-                "＋": "+",  # Full-width plus
-                "＆": "&",  # Full-width ampersand
-                "&amp;": "&",  # HTML entity
-                " and ": " & ",  # Normalize "and" to "&"
-                " And ": " & ",
-                " AND ": " & ",
-            }
+        # Replace other common Unicode characters
+        replacements = {
+            "＋": "+",  # Full-width plus
+            "＆": "&",  # Full-width ampersand
+            "&amp;": "&",  # HTML entity
+            " and ": " & ",  # Normalize "and" to "&"
+            " And ": " & ",
+            " AND ": " & ",
+        }
 
-            for unicode_char, ascii_char in replacements.items():
-                normalized = normalized.replace(unicode_char, ascii_char)
+        for unicode_char, ascii_char in replacements.items():
+            normalized = normalized.replace(unicode_char, ascii_char)
 
-            # Remove extra whitespace
-            normalized = re.sub(r"\s+", " ", normalized).strip()
+        # Remove extra whitespace
+        normalized = re.sub(r"\s+", " ", normalized).strip()
 
-            return normalized
+        return normalized
 
     def album_exists_by_name(self, artist: str, title: str) -> Dict[str, bool]:
         """Check if album exists by artist + title matching using cache."""
