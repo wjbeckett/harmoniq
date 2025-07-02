@@ -51,10 +51,12 @@ class LibrarySyncManager:
         self.database = database
 
         # In-memory caches for fast lookups
-        self._plex_mbids: Set[str] = set()
-        self._lidarr_mbids: Set[str] = set()
-        self._last_full_sync: Optional[datetime] = None
-        self._cache_built: bool = False
+        self._plex_mbids = set()
+        self._lidarr_mbids = set()
+        self._plex_name_cache = {}
+        self._lidarr_name_cache = {}
+        self._cache_built = False
+        self._last_full_sync = None
 
         # Background sync control
         self._background_task: Optional[asyncio.Task] = None
@@ -437,6 +439,19 @@ class LibrarySyncManager:
             # Get albums from database
             plex_albums = self.database.get_plex_albums()
             lidarr_albums = self.database.get_lidarr_albums()
+
+            # ✅ ADD DEBUG LOGGING
+            logger.info(
+                f"🔍 DEBUG: Retrieved {len(plex_albums)} Plex albums from database"
+            )
+            logger.info(
+                f"🔍 DEBUG: Retrieved {len(lidarr_albums)} Lidarr albums from database"
+            )
+
+            if plex_albums:
+                logger.info(f"🔍 DEBUG: First Plex album: {plex_albums[0]}")
+            if lidarr_albums:
+                logger.info(f"🔍 DEBUG: First Lidarr album: {lidarr_albums[0]}")
 
             # Build MBID caches (existing logic)
             self._plex_mbids = set()
