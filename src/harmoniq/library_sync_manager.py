@@ -93,11 +93,15 @@ class LibrarySyncManager:
                         "success": True,
                         "sync_type": "startup_full",
                         "duration": duration,
-                        "plex_albums": len(self._plex_mbids),
-                        "lidarr_albums": len(self._lidarr_mbids),
-                        "total_unique_albums": len(
+                        "plex_mbids": len(self._plex_mbids),
+                        "plex_name_cache": len(self._plex_name_cache),
+                        "lidarr_mbids": len(self._lidarr_mbids),
+                        "lidarr_name_cache": len(self._lidarr_name_cache),
+                        "total_unique_mbids": len(
                             self._plex_mbids | self._lidarr_mbids
                         ),
+                        "total_name_cache": len(self._plex_name_cache)
+                        + len(self._lidarr_name_cache),
                         "cache_built": self._cache_built,
                     }
                 else:
@@ -491,6 +495,13 @@ class LibrarySyncManager:
                     self._lidarr_name_cache[cache_key] = album
 
             self._cache_built = True
+
+            logger.info(
+                f"🔍 DEBUG: Plex name cache sample keys: {list(self._plex_name_cache.keys())[:5]}"
+            )
+            logger.info(f"🔍 DEBUG: Looking for Angels & Airwaves albums...")
+            angels_keys = [k for k in self._plex_name_cache.keys() if "angels" in k]
+            logger.info(f"🔍 DEBUG: Angels keys in Plex cache: {angels_keys}")
 
             logger.info(
                 f"Cache built: {len(self._plex_mbids)} Plex MBIDs, {len(self._lidarr_mbids)} Lidarr MBIDs"
