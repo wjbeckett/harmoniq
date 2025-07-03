@@ -465,17 +465,20 @@ class AlbumDiscoveryEngine:
         """Filter out albums that shouldn't be recommended using fast cache lookups."""
         filtered = []
 
-        logger.info(
-            f"🔍 Starting filter with sync_manager: {self.sync_manager is not None}"
-        )
-        logger.info(f"🔍 self.sync_manager value: {self.sync_manager}")
-        logger.info(f"🔍 hasattr sync_manager: {hasattr(self, 'sync_manager')}")
-        if hasattr(self, "sync_manager") and self.sync_manager:
-            logger.info(
-                f"🔍 Cache status - Plex: {len(self.sync_manager.plex_cache)} albums, Lidarr: {len(self.sync_manager.lidarr_cache)} albums"
+        # First, ensure the sync manager is actually available and ready.
+        if not hasattr(self, "sync_manager") or not self.sync_manager._initialized:
+            logger.error(
+                "CRITICAL: Sync Manager not available or not initialized. "
+                "Cannot filter against library. Aborting discovery run to "
+                "prevent duplicate recommendations."
             )
+            return []
 
-        # Get existing recommendations from SQLite to avoid duplicates
+        logger.info(
+            f"Filtering {len(albums)} discovered albums against the library cache..."
+        )
+
+        # Get existing recommendations from SQLite to avoid duplicates in this run.
         existing_recommendations = (
             self.recommendation_manager.get_recommendations_by_status()
         )
@@ -485,50 +488,35 @@ class AlbumDiscoveryEngine:
         }
 
         for album in albums:
-            album_key = f"{album['artist']}_{album['title']}".lower()
+            artist_name = album.get("artist")
+            album_title = album.get("title")
 
-            # Skip if already recommended
-            if album_key in existing_rec_titles:
+            # Skip if the album data is malformed
+            if not artist_name or not album_title:
                 continue
 
-            if hasattr(self, "sync_manager") and self.sync_manager:
-                # First check: Plex (actual library)
-                plex_check = self.sync_manager.album_exists_by_name(
-                    album["artist"], album["title"]
+            # Check 1: Is it already in our recommendations database?
+            album_key = f"{artist_name}_{album_title}".lower()
+            if album_key in existing_rec_titles:
+                logger.debug(f"Skipping '{album_key}', already in recommendations DB.")
+                continue
+
+            album_status = self.sync_manager.album_exists_by_name(
+                artist_name, album_title
+            )
+
+            if album_status["in_any_library"]:
+                logger.info(
+                    f"✅ Skipping '{artist_name} - {album_title}', it is already in the library (Plex or Lidarr)."
                 )
-                if plex_check["in_plex"]:
-                    logger.debug(
-                        f"Album already in Plex: {album['artist']} - {album['title']}"
-                    )
-                    continue
+                continue
 
-                # Second check: Lidarr monitored (queued for download)
-                if album.get("mbid"):
-                    lidarr_check = self.sync_manager.is_album_in_library(album["mbid"])
-                    if lidarr_check["in_lidarr"]:
-                        logger.debug(
-                            f"Album already monitored in Lidarr: {album['artist']} - {album['title']}"
-                        )
-                        continue
-            else:
-                # 🐌 FALLBACK: Slow API calls (only if sync manager not available)
-                logger.warning("Sync manager not available, using slow API fallback")
-                try:
-                    existing_albums = self.lidarr_client.get_all_albums()
-                    existing_titles = {
-                        f"{album['artist']}_{album['title']}".lower()
-                        for album in existing_albums
-                    }
-                    if album_key in existing_titles:
-                        continue
-                except Exception as e:
-                    logger.warning(f"Could not fetch existing Lidarr albums: {e}")
-
-            # Skip if too new (might not be available yet)
+            # Check 2: Skip if album year is invalid (no change here)
             max_year = datetime.now().year + 1
             if album.get("year") and album["year"] > max_year:
                 continue
 
+            # If all checks have passed, this is a genuinely new recommendation.
             filtered.append(album)
 
         return filtered
