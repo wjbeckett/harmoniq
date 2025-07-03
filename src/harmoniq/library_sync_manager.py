@@ -35,17 +35,46 @@ class SyncStats:
 class LibrarySyncManager:
     """
     Manages coordinated syncing of Plex and Lidarr libraries with smart caching.
+    IMPLEMENTED AS A SINGLETON to ensure only one instance exists application-wide.
     """
 
-    def __init__(self, plex_client, lidarr_client, database):
-        """
-        Initialize the sync manager.
+    _instance = None
+    _lock = threading.Lock()  # Class-level lock for thread-safe instantiation
 
-        Args:
-            plex_client: PlexClient instance
-            lidarr_client: LidarrClient instance
-            database: HarmoniqDatabase instance
+    def __new__(cls, *args, **kwargs):
+        """Controls the creation of the instance; the core of the Singleton pattern."""
+        if cls._instance is None:
+            with cls._lock:
+                # Double-check locking to prevent a race condition if two threads
+                # try to instantiate at the exact same time.
+                if cls._instance is None:
+                    logger.info(
+                        "Creating the one-and-only LibrarySyncManager instance."
+                    )
+                    cls._instance = super(LibrarySyncManager, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self, plex_client=None, lidarr_client=None, database=None):
         """
+        Initializes the sync manager's state.
+        This method can be called multiple times, but the core logic
+        will only run once thanks to the `_initialized` flag.
+        """
+        if self._initialized:
+            logger.debug(
+                "LibrarySyncManager instance already initialized. Returning existing instance."
+            )
+            return
+
+        # The very first call MUST provide the clients and database.
+        if not all([plex_client, lidarr_client, database]):
+            logger.warning(
+                "LibrarySyncManager needs clients and database for first-time initialization."
+            )
+            return
+
+        logger.info("🚀 Initializing LibrarySyncManager for the first time...")
         self.plex_client = plex_client
         self.lidarr_client = lidarr_client
         self.database = database
@@ -60,10 +89,15 @@ class LibrarySyncManager:
 
         # Background sync control
         self._background_task: Optional[asyncio.Task] = None
-        self._sync_lock = threading.Lock()
+        self._sync_lock = threading.Lock()  # Lock for sync operations
         self._shutdown_event = threading.Event()
 
-        logger.info("Library Sync Manager initialized")
+        # --- IMPORTANT: Perform the startup sync automatically on first init ---
+        self.startup_sync()
+
+        # Mark as initialized to prevent this logic from ever running again.
+        self._initialized = True
+        logger.info("✅ Library Sync Manager initialization complete.")
 
     def startup_sync(self) -> Dict[str, Any]:
         """
@@ -188,6 +222,7 @@ class LibrarySyncManager:
 
         # Replace ALL types of quotes and apostrophes with standard ASCII
         quote_chars = [
+            "’",
             """, """,
             '"',
             '"',

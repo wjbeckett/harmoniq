@@ -52,15 +52,10 @@ discovery_engine_global = None
 
 def initialize_global_clients_and_libs():
     global plex_client_global, lastfm_client_global, valid_music_libraries_global, target_library_global, discovery_engine_global
-    logger.info("Scheduler: Initializing global Plex and Last.fm clients...")
-    valid_music_libraries_global = (
-        []
-    )  # Reset for re-initialization if ever called again
+    logger.info("Scheduler: Initializing global components...")
 
     try:
-        # Initialize Plex client
         plex_client_global = PlexClient()
-
         if plex_client_global:
             for name in config.PLEX_MUSIC_LIBRARY_NAMES:
                 lib = plex_client_global.get_music_library(name)
@@ -78,37 +73,18 @@ def initialize_global_clients_and_libs():
         else:
             logger.error("Scheduler: Plex client failed to initialize.")
 
-        # Initialize other clients and database
         stats_tracker = get_stats_tracker()
-
-        # Create client instances (not classes!)
         lidarr_client = LidarrClient(
             base_url=config.LIDARR_URL, api_key=config.LIDARR_API_KEY
         )
-
-        # Initialize database
         import os
 
         config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
         database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
 
-        # Create sync manager with actual instances
+        logger.info("Scheduler: Getting or creating LibrarySyncManager instance...")
         sync_manager = LibrarySyncManager(plex_client_global, lidarr_client, database)
 
-        # Perform initial sync
-        logger.info("Scheduler: Performing initial library sync...")
-        sync_result = sync_manager.startup_sync()
-
-        if sync_result["success"]:
-            logger.info(
-                f"Scheduler: Sync completed - {sync_result.get('total_unique_albums', 0)} albums cached"
-            )
-        else:
-            logger.error(
-                f"Scheduler: Sync failed - {sync_result.get('error', 'Unknown error')}"
-            )
-
-        # Create discovery engine with sync manager
         discovery_engine_global = AlbumDiscoveryEngine(
             config, stats_tracker, sync_manager=sync_manager
         )
