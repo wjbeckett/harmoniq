@@ -59,6 +59,14 @@ def create_app() -> FastAPI:
         app.state.database = None
 
     try:
+        discovery_engine = AlbumDiscoveryEngine(config_dir)
+        app.state.discovery_engine = discovery_engine
+        logger.info("Web app: Album discovery engine initialized.")
+    except Exception as e:
+        logger.error(f"Web app: Failed to initialize album discovery engine: {e}")
+        app.state.discovery_engine = None
+
+    try:
         recommendation_manager = AlbumRecommendationManager(config_dir)
         app.state.recommendation_manager = recommendation_manager
         logger.info("Web app: Recommendation manager initialized.")
