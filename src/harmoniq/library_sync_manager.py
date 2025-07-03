@@ -439,6 +439,7 @@ class LibrarySyncManager:
         """Build in-memory cache from database."""
         try:
             logger.info("Building in-memory album cache...")
+            logger.info(f"🔧 Building cache at {time.time()}")
 
             # Get albums from database
             plex_albums = self.database.get_plex_albums()
