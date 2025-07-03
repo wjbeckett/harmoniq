@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 
-# Pydantic models for request/response (same as original)
+# Pydantic models for request/response
+class StatusUpdateRequest(BaseModel):
+    status: str
+    user_notes: Optional[str] = ""
+
+
 class RecommendationResponse(BaseModel):
     id: str
     title: str
@@ -140,20 +145,22 @@ async def get_all_recommendations(
 
 @router.post("/update-status/{album_id}")
 async def update_recommendation_status(
-    request: Request, album_id: str, status: str, user_notes: Optional[str] = ""
+    request: Request, album_id: str, payload: StatusUpdateRequest
 ) -> Dict[str, Any]:
     """Update the status of a single recommendation."""
     try:
         recommendation_manager = get_recommendation_manager(request)
 
-        # Validate status
+        # Validate status from payload
         try:
-            status_enum = RecommendationStatus(status)
+            status_enum = RecommendationStatus(payload.status)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid status: {payload.status}"
+            )
 
         success = recommendation_manager.update_recommendation_status(
-            album_id, status_enum, user_notes
+            album_id, status_enum, payload.user_notes
         )
 
         if not success:
@@ -161,9 +168,9 @@ async def update_recommendation_status(
 
         return {
             "success": True,
-            "message": f"Recommendation status updated to {status}",
+            "message": f"Recommendation status updated to {payload.status}",
             "album_id": album_id,
-            "new_status": status,
+            "new_status": payload.status,
         }
 
     except HTTPException:
