@@ -14,13 +14,12 @@ import logging
 from .routes import dashboard, status, recommendations_api
 from ..recommendation_manager import AlbumRecommendationManager, StatsTracker
 from ..discovery_library_grower import AlbumDiscoveryEngine
-from ..library_sync_manager import LibrarySyncManager  # New import
-from ..plex_client import PlexClient  # New import
-from ..lidarr_client import LidarrClient  # New import
-from ..database import HarmoniqDatabase  # New import
-from .. import config  # Import your config module
+from ..library_sync_manager import LibrarySyncManager
+from ..plex_client import PlexClient
+from ..lidarr_client import LidarrClient
+from ..database import HarmoniqDatabase
+from .. import config
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 
@@ -46,10 +45,8 @@ def create_app() -> FastAPI:
             "Web app: CRITICAL - Could not get an initialized Library Sync Manager. The scheduler may need to be running first."
         )
 
-    # Get config directory
     config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
 
-    # Initialize other managers that are local to the web app
     try:
         database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
         app.state.database = database
@@ -59,11 +56,13 @@ def create_app() -> FastAPI:
         app.state.database = None
 
     try:
-        discovery_engine = AlbumDiscoveryEngine(config_dir)
+        discovery_engine = AlbumDiscoveryEngine(config, sync_manager)
         app.state.discovery_engine = discovery_engine
         logger.info("Web app: Album discovery engine initialized.")
     except Exception as e:
-        logger.error(f"Web app: Failed to initialize album discovery engine: {e}")
+        logger.error(
+            f"Web app: Failed to initialize album discovery engine: {e}", exc_info=True
+        )
         app.state.discovery_engine = None
 
     try:
@@ -82,7 +81,6 @@ def create_app() -> FastAPI:
         logger.error(f"Web app: Failed to initialize stats tracker: {e}")
         app.state.stats_tracker = None
 
-    # Get the web directory path and mount static/templates (no change here)
     web_dir = Path(__file__).parent
     static_dir = web_dir / "static"
     templates_dir = web_dir / "templates"
@@ -90,14 +88,12 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     templates = Jinja2Templates(directory=str(templates_dir))
 
-    # Include API routes (no change here)
     app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
     app.include_router(status.router, prefix="/api/status", tags=["Status"])
     app.include_router(
         recommendations_api.router, prefix="/api", tags=["Recommendations"]
     )
 
-    # Add API routes that use the sync_manager (no change to the functions themselves)
     @app.get("/api/sync/status")
     async def get_sync_status():
         if not app.state.sync_manager._initialized:
