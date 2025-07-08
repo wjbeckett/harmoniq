@@ -20,6 +20,7 @@ from ..lidarr_client import LidarrClient
 from ..database import HarmoniqDatabase
 from .. import config
 
+# Configure logging
 logger = logging.getLogger(__name__)
 
 
@@ -34,52 +35,30 @@ def create_app() -> FastAPI:
         redoc_url="/api/redoc",
     )
     logger.info("🟢 Starting Harmoniq Web Application...")
-    sync_manager = LibrarySyncManager()
-    app.state.sync_manager = sync_manager
-    if sync_manager._initialized:
-        logger.info(
-            "Web app: Successfully attached to existing Library Sync Manager instance."
-        )
-    else:
-        logger.error(
-            "Web app: CRITICAL - Could not get an initialized Library Sync Manager. The scheduler may need to be running first."
-        )
 
     config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
+    database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
+    lidarr_client = LidarrClient(config.LIDARR_URL, config.LIDARR_API_KEY)
+    plex_client = PlexClient(
+        config.PLEX_URL, config.PLEX_TOKEN, config.PLEX_MUSIC_LIBRARY_NAME
+    )
 
-    try:
-        database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
-        app.state.database = database
-        logger.info("Web app: Database handle created.")
-    except Exception as e:
-        logger.error(f"Web app: Failed to initialize database handle: {e}")
-        app.state.database = None
+    sync_manager = LibrarySyncManager()
+    sync_manager.initialize(
+        database=database, lidarr_client=lidarr_client, plex_client=plex_client
+    )
 
-    try:
-        discovery_engine = AlbumDiscoveryEngine(config, sync_manager)
-        app.state.discovery_engine = discovery_engine
-        logger.info("Web app: Album discovery engine initialized.")
-    except Exception as e:
-        logger.error(
-            f"Web app: Failed to initialize album discovery engine: {e}", exc_info=True
-        )
-        app.state.discovery_engine = None
+    discovery_engine = AlbumDiscoveryEngine(config, sync_manager)
 
-    try:
-        recommendation_manager = AlbumRecommendationManager(config_dir)
-        app.state.recommendation_manager = recommendation_manager
-        logger.info("Web app: Recommendation manager initialized.")
-    except Exception as e:
-        logger.error(f"Web app: Failed to initialize recommendation manager: {e}")
-        app.state.recommendation_manager = None
+    recommendation_manager = AlbumRecommendationManager(config_dir)
+    stats_tracker = StatsTracker(config_dir)
 
-    try:
-        stats_tracker = StatsTracker(config_dir)
-        app.state.stats_tracker = stats_tracker
-        logger.info("Web app: Stats tracker initialized.")
-    except Exception as e:
-        logger.error(f"Web app: Failed to initialize stats tracker: {e}")
-        app.state.stats_tracker = None
+    app.state.database = database
+    app.state.sync_manager = sync_manager
+    app.state.discovery_engine = discovery_engine
+    app.state.recommendation_manager = recommendation_manager
+    app.state.stats_tracker = stats_tracker
+    logger.info("✅ All web application services initialized successfully.")
 
     web_dir = Path(__file__).parent
     static_dir = web_dir / "static"
@@ -96,20 +75,14 @@ def create_app() -> FastAPI:
 
     @app.get("/api/sync/status")
     async def get_sync_status():
-        if not app.state.sync_manager._initialized:
-            return {"error": "Sync manager not available"}
         return app.state.sync_manager.get_sync_status()
 
     @app.post("/api/sync/force")
     async def force_sync():
-        if not app.state.sync_manager._initialized:
-            return {"error": "Sync manager not available"}
         return app.state.sync_manager.force_full_sync()
 
     @app.get("/api/sync/check/{mbid}")
     async def check_album_in_library(mbid: str):
-        if not app.state.sync_manager._initialized:
-            return {"error": "Sync manager not available"}
         return app.state.sync_manager.is_album_in_library(mbid)
 
     @app.get("/api/sync/check-by-name")
@@ -118,9 +91,6 @@ def create_app() -> FastAPI:
         Check if an album exists in any library by its artist and title.
         This is the primary endpoint for checking Last.fm recommendations.
         """
-        if not app.state.sync_manager._initialized:
-            return {"error": "Sync manager not available"}
-
         return app.state.sync_manager.album_exists_by_name(artist=artist, title=title)
 
     # HTML Routes (Dashboard Pages)
