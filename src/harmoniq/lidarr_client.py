@@ -123,69 +123,30 @@ class LidarrClient:
             )
             return False
 
-        # --- Step 1: Find the artist's internal Lidarr ID ---
-        logger.debug(
-            f"Searching for artist '{artist_name}' in Lidarr to prepare album add..."
-        )
-        # Note: The 'album/lookup' endpoint is better for this than 'artist/lookup'
-        search_term = f"mbid:{musicbrainz_id}"
-        lookup_results = self._make_request(
-            "GET", "search", params={"term": search_term}
-        )
-
-        if not lookup_results or not isinstance(lookup_results, list):
-            logger.error(
-                f"Could not find a match for MBID '{musicbrainz_id}' via Lidarr search."
-            )
-            return False
-
-        # The search result contains the artist object Lidarr needs
-        album_lookup_data = lookup_results[0]
-        artist_data = album_lookup_data.get("artist")
-
-        if not artist_data:
-            logger.error(
-                f"Lidarr search result for '{album_title}' is missing artist data."
-            )
-            return False
-
-        # --- Step 2: Prepare the Album Payload for Lidarr ---
-        add_options = {"searchForNewAlbum": config.LIDARR_SEARCH_FOR_ALBUM_ON_ADD}
-
-        album_payload = {
-            "title": album_title,
-            "artist": artist_data,
-            "foreignAlbumId": musicbrainz_id,
-            "monitored": True,
-            "rootFolderPath": config.LIDARR_ROOT_FOLDER_PATH,
-            "qualityProfileId": config.LIDARR_QUALITY_PROFILE_ID,
-            "metadataProfileId": config.LIDARR_METADATA_PROFILE_ID,
-            "addOptions": add_options,
-        }
-
-        logger.info(f"Submitting album to Lidarr: '{album_title}' by '{artist_name}'")
-        logger.debug(f"Lidarr add payload: {album_payload}")
-
-        # --- Step 3: Make the API call ---
         try:
-            # Use the /album endpoint to add
-            result = self._make_request("POST", "album", json_data=album_payload)
+            # Use the existing add_album_by_mbid method which is more robust
+            result = self.add_album_by_mbid(
+                release_group_mbid=musicbrainz_id,
+                root_folder_path=config.LIDARR_ROOT_FOLDER_PATH,
+                quality_profile_id=config.LIDARR_QUALITY_PROFILE_ID,
+                metadata_profile_id=config.LIDARR_METADATA_PROFILE_ID,
+                monitored=True,
+                search_on_add=config.LIDARR_SEARCH_FOR_ALBUM_ON_ADD,
+            )
 
-            if result and result.get("id"):
+            if result:
                 logger.info(
-                    f"✅ Successfully added '{album_title}' to Lidarr. Lidarr ID: {result.get('id')}"
+                    f"Successfully added album '{album_title}' by '{artist_name}' to Lidarr"
                 )
                 return True
             else:
                 logger.error(
-                    f"❌ Failed to add '{album_title}' to Lidarr. Response from Lidarr: {result}"
+                    f"Failed to add album '{album_title}' by '{artist_name}' to Lidarr"
                 )
                 return False
+
         except Exception as e:
-            logger.error(
-                f"An exception occurred while adding album to Lidarr: {e}",
-                exc_info=True,
-            )
+            logger.error(f"Error adding album to Lidarr: {e}")
             return False
 
     def get_root_folders(self) -> List[Dict]:
