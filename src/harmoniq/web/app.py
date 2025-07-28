@@ -45,10 +45,10 @@ def create_app() -> FastAPI:
         plex_client=plex_client, lidarr_client=lidarr_client, database=database
     )
 
-    discovery_engine = AlbumDiscoveryEngine(config, sync_manager)
-
     recommendation_manager = AlbumRecommendationManager(config_dir)
     stats_tracker = StatsTracker(config_dir)
+
+    discovery_engine = AlbumDiscoveryEngine(config, stats_tracker, sync_manager)
 
     app.state.database = database
     app.state.sync_manager = sync_manager

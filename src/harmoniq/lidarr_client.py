@@ -286,7 +286,8 @@ class LidarrClient:
             "qualityProfileId": quality_profile_id,
             "metadataProfileId": metadata_profile_id,
             "rootFolderPath": root_folder_path,
-            "monitored": True,
+            "monitored": False,  # Set to False so only the specific album is monitored
+            "monitorNewItems": "none",  # Don't automatically monitor new items
             # Copy any other fields that might be present
             **{
                 k: v
@@ -297,6 +298,7 @@ class LidarrClient:
                     "metadataProfileId",
                     "rootFolderPath",
                     "monitored",
+                    "monitorNewItems",
                 ]
             },
         }
