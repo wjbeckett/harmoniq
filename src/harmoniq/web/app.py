@@ -39,13 +39,10 @@ def create_app() -> FastAPI:
     config_dir = os.path.dirname(config.CONFIG_FILE_PATH)
     database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
     lidarr_client = LidarrClient(config.LIDARR_URL, config.LIDARR_API_KEY)
-    plex_client = PlexClient(
-        config.PLEX_URL, config.PLEX_TOKEN, config.PLEX_MUSIC_LIBRARY_NAMES
-    )
+    plex_client = PlexClient(config.PLEX_URL, config.PLEX_TOKEN)
 
-    sync_manager = LibrarySyncManager()
-    sync_manager.initialize(
-        database=database, lidarr_client=lidarr_client, plex_client=plex_client
+    sync_manager = LibrarySyncManager(
+        plex_client=plex_client, lidarr_client=lidarr_client, database=database
     )
 
     discovery_engine = AlbumDiscoveryEngine(config, sync_manager)
