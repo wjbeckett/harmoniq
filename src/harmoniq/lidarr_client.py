@@ -251,6 +251,17 @@ class LidarrClient:
             )
             return None
 
+        # Debug: Log the search result structure
+        logger.debug(f"Album search result keys: {list(album_search_result.keys())}")
+        logger.debug(f"Album search result: {album_search_result}")
+
+        # Debug: Check artist data structure
+        artist_data = album_search_result.get("artist", {})
+        logger.debug(
+            f"Artist data keys: {list(artist_data.keys()) if artist_data else 'No artist data'}"
+        )
+        logger.debug(f"Artist data: {artist_data}")
+
         # Check if album already exists
         if self.album_exists_in_library(release_group_mbid):
             logger.info(
@@ -258,11 +269,41 @@ class LidarrClient:
             )
             return None
 
+        # Extract and prepare artist data
+        artist_data = album_search_result.get("artist", {})
+        if not artist_data:
+            logger.error(
+                f"No artist data found in search result for MBID {release_group_mbid}"
+            )
+            return None
+
+        # Ensure artist has required fields for Lidarr
+        artist_for_lidarr = {
+            "artistName": artist_data.get("artistName", "Unknown"),
+            "foreignArtistId": artist_data.get("foreignArtistId", ""),
+            "qualityProfileId": quality_profile_id,
+            "metadataProfileId": metadata_profile_id,
+            "rootFolderPath": root_folder_path,
+            "monitored": True,
+            # Copy any other fields that might be present
+            **{
+                k: v
+                for k, v in artist_data.items()
+                if k
+                not in [
+                    "qualityProfileId",
+                    "metadataProfileId",
+                    "rootFolderPath",
+                    "monitored",
+                ]
+            },
+        }
+
         # Prepare the album data for adding
         album_data = {
             "foreignAlbumId": release_group_mbid,
             "title": album_search_result.get("title", ""),
-            "artist": album_search_result.get("artist", {}),
+            "artist": artist_for_lidarr,
             "rootFolderPath": root_folder_path,
             "qualityProfileId": quality_profile_id,
             "metadataProfileId": metadata_profile_id,
@@ -271,8 +312,9 @@ class LidarrClient:
         }
 
         logger.info(
-            f"Adding album '{album_data['title']}' by '{album_data['artist'].get('artistName', 'Unknown')}' to Lidarr"
+            f"Adding album '{album_data['title']}' by '{artist_for_lidarr.get('artistName', 'Unknown')}' to Lidarr"
         )
+        logger.debug(f"Album payload for Lidarr: {album_data}")
 
         result = self._make_request("POST", "album", json_data=album_data)
 
