@@ -9,9 +9,10 @@ from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import urljoin
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
-
+from . import config
 from .database import LibrarySyncStatus
+
+logger = logging.getLogger(__name__)
 
 
 class LidarrClient:
@@ -121,8 +122,6 @@ class LidarrClient:
                 "Add to Lidarr failed: Missing artist, title, or MusicBrainz ID."
             )
             return False
-
-        from .. import config  # Import config module here to access settings
 
         # --- Step 1: Find the artist's internal Lidarr ID ---
         logger.debug(
