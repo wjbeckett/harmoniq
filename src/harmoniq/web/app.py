@@ -40,7 +40,7 @@ def create_app() -> FastAPI:
     database = HarmoniqDatabase(os.path.join(config_dir, "harmoniq.db"))
     lidarr_client = LidarrClient(config.LIDARR_URL, config.LIDARR_API_KEY)
     plex_client = PlexClient(
-        config.PLEX_URL, config.PLEX_TOKEN, config.PLEX_MUSIC_LIBRARY_NAME
+        config.PLEX_URL, config.PLEX_TOKEN, config.PLEX_MUSIC_LIBRARY_NAMES
     )
 
     sync_manager = LibrarySyncManager()
