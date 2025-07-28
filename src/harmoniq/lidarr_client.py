@@ -255,8 +255,11 @@ class LidarrClient:
         logger.debug(f"Album search result keys: {list(album_search_result.keys())}")
         logger.debug(f"Album search result: {album_search_result}")
 
+        # Extract album and artist data from the correct nested structure
+        album_info = album_search_result.get("album", {})
+        artist_data = album_info.get("artist", {})
+
         # Debug: Check artist data structure
-        artist_data = album_search_result.get("artist", {})
         logger.debug(
             f"Artist data keys: {list(artist_data.keys()) if artist_data else 'No artist data'}"
         )
@@ -270,7 +273,6 @@ class LidarrClient:
             return None
 
         # Extract and prepare artist data
-        artist_data = album_search_result.get("artist", {})
         if not artist_data:
             logger.error(
                 f"No artist data found in search result for MBID {release_group_mbid}"
@@ -302,7 +304,7 @@ class LidarrClient:
         # Prepare the album data for adding
         album_data = {
             "foreignAlbumId": release_group_mbid,
-            "title": album_search_result.get("title", ""),
+            "title": album_info.get("title", ""),
             "artist": artist_for_lidarr,
             "rootFolderPath": root_folder_path,
             "qualityProfileId": quality_profile_id,
