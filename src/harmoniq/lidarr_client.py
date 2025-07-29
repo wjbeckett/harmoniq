@@ -76,6 +76,9 @@ class LidarrClient:
             elif response.status_code == 201:
                 # Created - return the created object
                 return response.json()
+            elif response.status_code == 202:
+                # Accepted - request accepted for async processing
+                return response.json()
             elif response.status_code == 404:
                 logger.debug(f"Resource not found: {url}")
                 return None
@@ -326,19 +329,29 @@ class LidarrClient:
             logger.info(
                 f"Successfully added album with MBID {release_group_mbid} to Lidarr"
             )
-            
+
             # Step 2: Update the artist to monitored status so downloads are tracked
             artist_id = result.get("artist", {}).get("id")
             if artist_id:
-                logger.info(f"Updating artist {artist_for_lidarr.get('artistName')} to monitored status")
-                artist_update_success = self._update_artist_monitoring(artist_id, monitored=True)
+                logger.info(
+                    f"Updating artist {artist_for_lidarr.get('artistName')} to monitored status"
+                )
+                artist_update_success = self._update_artist_monitoring(
+                    artist_id, monitored=True
+                )
                 if artist_update_success:
-                    logger.info(f"Successfully updated artist monitoring for {artist_for_lidarr.get('artistName')}")
+                    logger.info(
+                        f"Successfully updated artist monitoring for {artist_for_lidarr.get('artistName')}"
+                    )
                 else:
-                    logger.warning(f"Failed to update artist monitoring for {artist_for_lidarr.get('artistName')} - downloads may not be tracked")
+                    logger.warning(
+                        f"Failed to update artist monitoring for {artist_for_lidarr.get('artistName')} - downloads may not be tracked"
+                    )
             else:
-                logger.warning("No artist ID returned from album creation - cannot update artist monitoring")
-            
+                logger.warning(
+                    "No artist ID returned from album creation - cannot update artist monitoring"
+                )
+
             return result
         else:
             logger.error(
@@ -346,40 +359,90 @@ class LidarrClient:
             )
             return None
 
-    def _update_artist_monitoring(self, artist_id: int, monitored: bool) -> bool:
+    def _update_artist_monitoring(
+        self, artist_id: int, monitored: bool, max_retries: int = 3
+    ) -> bool:
         """
-        Update an artist's monitoring status.
+        Update an artist's monitoring status with retry logic.
 
         Args:
             artist_id: Lidarr artist ID
             monitored: Whether to monitor the artist
+            max_retries: Maximum number of retry attempts
 
         Returns:
             True if update successful, False otherwise
         """
-        try:
-            # First, get the current artist data
-            artist_data = self._make_request("GET", f"artist/{artist_id}")
-            if not artist_data:
-                logger.error(f"Could not retrieve artist data for ID {artist_id}")
-                return False
+        import time
 
-            # Update the monitored status
-            artist_data["monitored"] = monitored
-            
-            # Make the PUT request to update the artist
-            result = self._make_request("PUT", f"artist/{artist_id}", json_data=artist_data)
-            
-            if result:
-                logger.debug(f"Successfully updated artist {artist_id} monitoring to {monitored}")
-                return True
-            else:
-                logger.error(f"Failed to update artist {artist_id} monitoring status")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error updating artist {artist_id} monitoring: {e}")
-            return False
+        for attempt in range(max_retries):
+            try:
+                # Add a small delay to allow Lidarr to finish processing
+                if attempt > 0:
+                    delay = 2**attempt  # Exponential backoff: 2s, 4s, 8s
+                    logger.info(f"Waiting {delay}s before retry attempt {attempt + 1}")
+                    time.sleep(delay)
+
+                # First, get the current artist data
+                artist_data = self._make_request("GET", f"artist/{artist_id}")
+                if not artist_data:
+                    logger.error(
+                        f"Could not retrieve artist data for ID {artist_id} (attempt {attempt + 1})"
+                    )
+                    continue
+
+                # Check current status
+                current_monitored = artist_data.get("monitored", False)
+                logger.debug(
+                    f"Artist {artist_id} current monitoring status: {current_monitored} (attempt {attempt + 1})"
+                )
+
+                # If it's already in the desired state, we're done
+                if current_monitored == monitored:
+                    logger.info(
+                        f"Artist {artist_id} already has correct monitoring status: {monitored}"
+                    )
+                    return True
+
+                # Update the monitored status
+                artist_data["monitored"] = monitored
+
+                # Make the PUT request to update the artist
+                result = self._make_request(
+                    "PUT", f"artist/{artist_id}", json_data=artist_data
+                )
+
+                if result:
+                    # Check if the returned data shows the update was successful
+                    updated_monitored = result.get("monitored", False)
+                    logger.info(
+                        f"Artist {artist_id} monitoring update response: monitored={updated_monitored} (attempt {attempt + 1})"
+                    )
+
+                    if updated_monitored == monitored:
+                        logger.info(
+                            f"Successfully updated artist {artist_id} monitoring to {monitored}"
+                        )
+                        return True
+                    else:
+                        logger.warning(
+                            f"Artist {artist_id} monitoring update returned different value: expected {monitored}, got {updated_monitored}"
+                        )
+                        # Continue to retry
+                else:
+                    logger.error(
+                        f"Failed to update artist {artist_id} monitoring status - no response data (attempt {attempt + 1})"
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"Error updating artist {artist_id} monitoring (attempt {attempt + 1}): {e}"
+                )
+
+        logger.error(
+            f"Failed to update artist {artist_id} monitoring after {max_retries} attempts"
+        )
+        return False
 
     def get_all_albums(self, use_cache=True):
         """Fetch all monitored albums from Lidarr with optional caching."""
